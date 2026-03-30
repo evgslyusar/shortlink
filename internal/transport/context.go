@@ -1,14 +1,12 @@
 package transport
 
-import "context"
+import (
+	"context"
 
-type ctxKey string
+	mw "github.com/evgslyusar/shortlink/internal/transport/middleware"
+)
 
-const ctxKeyUserID ctxKey = "user_id"
-
-// getUserID extracts the user ID from context. Returns empty string if not set.
-// The auth middleware (T-06) will set this value.
+// getUserID extracts the user ID from context, set by the auth middleware.
 func getUserID(ctx context.Context) string {
-	id, _ := ctx.Value(ctxKeyUserID).(string)
-	return id
+	return mw.UserIDFromContext(ctx)
 }
