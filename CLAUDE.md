@@ -82,7 +82,9 @@ Follow standard Go project layout:
 ```
 .
 ├── cmd/
-│   └── server/         # main packages, one per binary
+│   ├── slinkapi/       # HTTP server
+│   │   └── main.go
+│   └── bot/            # Slink bot in one binary
 │       └── main.go
 ├── internal/           # private application code
 │   ├── domain/         # core business logic, no external deps
