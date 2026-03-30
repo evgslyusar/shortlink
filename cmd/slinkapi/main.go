@@ -75,8 +75,12 @@ func main() {
 	linkRepo := repository.NewLinkPostgres(dbPool)
 	linkCache := repository.NewLinkCache(rdb)
 	linkSvc := service.NewLinkService(linkRepo, linkRepo, linkRepo, linkRepo, linkCache, logger)
-	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, cfg.BaseURL, logger)
-	redirectHandler := transport.NewRedirectHandler(linkSvc, logger)
+
+	clickRepo := repository.NewClickPostgres(dbPool)
+	clickSvc := service.NewClickService(clickRepo, clickRepo, linkRepo, logger)
+
+	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, transport.NewClickStatsAdapter(clickSvc), cfg.BaseURL, logger)
+	redirectHandler := transport.NewRedirectHandler(linkSvc, clickSvc, logger)
 
 	// Set up router.
 	r := chi.NewRouter()
@@ -97,6 +101,7 @@ func main() {
 		r.Post("/", linkHandler.CreateLink)
 		r.Get("/", linkHandler.ListLinks)
 		r.Delete("/{slug}", linkHandler.DeleteLink)
+		r.Get("/{slug}/stats", linkHandler.Stats)
 	})
 
 	// Redirect catch-all — must be registered after /healthz and /v1/* to avoid conflicts.
@@ -109,6 +114,15 @@ func main() {
 		WriteTimeout: cfg.RequestTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
 	}
+
+	// Start click tracking worker with its own cancellation so we can
+	// stop it after the HTTP server has drained all in-flight requests.
+	clickCtx, clickStop := context.WithCancel(context.Background())
+	clickDone := make(chan struct{})
+	go func() {
+		defer close(clickDone)
+		clickSvc.Run(clickCtx)
+	}()
 
 	// Start server in a goroutine.
 	errCh := make(chan error, 1)
@@ -128,12 +142,17 @@ func main() {
 		stop()
 	}
 
+	// 1. Shutdown HTTP server first — drains in-flight requests (which may record clicks).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Fatal("slinkapi shutdown error", zap.Error(err))
 	}
+
+	// 2. Stop click worker — drains remaining channel items and flushes.
+	clickStop()
+	<-clickDone
 	logger.Info("slinkapi stopped")
 }
 

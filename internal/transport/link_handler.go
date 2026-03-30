@@ -27,11 +27,24 @@ type LinkDeleterSvc interface {
 	DeleteLink(ctx context.Context, userID, slug string) error
 }
 
+// LinkStats holds aggregated click statistics returned by a stats service.
+type LinkStats struct {
+	TotalClicks int64
+	ByDay       []domain.DayStat
+	ByCountry   []domain.CountryStat
+}
+
+// LinkStatsSvc returns aggregated click statistics for a link.
+type LinkStatsSvc interface {
+	GetStats(ctx context.Context, userID, slug string) (*LinkStats, error)
+}
+
 // LinkHandler handles HTTP requests for link endpoints.
 type LinkHandler struct {
 	creator LinkCreatorSvc
 	lister  LinkListerSvc
 	deleter LinkDeleterSvc
+	stats   LinkStatsSvc
 	baseURL string
 	logger  *zap.Logger
 }
@@ -41,6 +54,7 @@ func NewLinkHandler(
 	creator LinkCreatorSvc,
 	lister LinkListerSvc,
 	deleter LinkDeleterSvc,
+	stats LinkStatsSvc,
 	baseURL string,
 	logger *zap.Logger,
 ) *LinkHandler {
@@ -48,6 +62,7 @@ func NewLinkHandler(
 		creator: creator,
 		lister:  lister,
 		deleter: deleter,
+		stats:   stats,
 		baseURL: baseURL,
 		logger:  logger,
 	}
@@ -75,6 +90,22 @@ type linkItem struct {
 
 type listLinksResponse struct {
 	Items []linkItem `json:"items"`
+}
+
+type statsResponse struct {
+	TotalClicks int64             `json:"total_clicks"`
+	ByDay       []dayStatResponse `json:"by_day"`
+	ByCountry   []countryStatResponse `json:"by_country"`
+}
+
+type dayStatResponse struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+type countryStatResponse struct {
+	Country string `json:"country"`
+	Count   int64  `json:"count"`
 }
 
 // CreateLink handles POST /v1/links.
@@ -157,6 +188,51 @@ func (h *LinkHandler) DeleteLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Stats handles GET /v1/links/{slug}/stats.
+func (h *LinkHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	userID := getUserID(r.Context())
+	if userID == "" {
+		respondError(w, r, http.StatusUnauthorized, ErrCodeUnauthorized, "authentication required")
+		return
+	}
+
+	slug := chi.URLParam(r, "slug")
+
+	stats, err := h.stats.GetStats(r.Context(), userID, slug)
+	if err != nil {
+		status, code, msg := mapError(err)
+		h.logError(err, status)
+		respondError(w, r, status, code, msg)
+		return
+	}
+
+	respondData(w, r, http.StatusOK, toStatsResponse(stats))
+}
+
+func toStatsResponse(s *LinkStats) statsResponse {
+	days := make([]dayStatResponse, 0, len(s.ByDay))
+	for _, d := range s.ByDay {
+		days = append(days, dayStatResponse{
+			Date:  d.Date.Format("2006-01-02"),
+			Count: d.Count,
+		})
+	}
+
+	countries := make([]countryStatResponse, 0, len(s.ByCountry))
+	for _, c := range s.ByCountry {
+		countries = append(countries, countryStatResponse{
+			Country: c.Country,
+			Count:   c.Count,
+		})
+	}
+
+	return statsResponse{
+		TotalClicks: s.TotalClicks,
+		ByDay:       days,
+		ByCountry:   countries,
+	}
 }
 
 func (h *LinkHandler) logError(err error, status int) {
