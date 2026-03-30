@@ -19,6 +19,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/evgslyusar/shortlink/internal/config"
+	"github.com/evgslyusar/shortlink/internal/repository"
+	"github.com/evgslyusar/shortlink/internal/service"
+	"github.com/evgslyusar/shortlink/internal/transport"
 	mw "github.com/evgslyusar/shortlink/internal/transport/middleware"
 )
 
@@ -64,40 +67,92 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
+	// Set up dependencies.
+	userRepo := repository.NewUserPostgres(dbPool)
+	authSvc := service.NewAuthService(userRepo, userRepo, logger)
+	authHandler := transport.NewAuthHandler(authSvc, authSvc, logger)
+
+	linkRepo := repository.NewLinkPostgres(dbPool)
+	linkCache := repository.NewLinkCache(rdb)
+	linkSvc := service.NewLinkService(linkRepo, linkRepo, linkRepo, linkRepo, linkCache, logger)
+
+	clickRepo := repository.NewClickPostgres(dbPool)
+	clickSvc := service.NewClickService(clickRepo, clickRepo, linkRepo, logger)
+
+	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, transport.NewClickStatsAdapter(clickSvc), cfg.BaseURL, logger)
+	redirectHandler := transport.NewRedirectHandler(linkSvc, clickSvc, logger)
+
 	// Set up router.
 	r := chi.NewRouter()
 	r.Use(mw.Correlation)
-	r.Use(mw.Logger(logger))
 	r.Use(mw.Recovery(logger))
+	r.Use(mw.Logger(logger))
 
 	r.Get("/healthz", handleHealthz())
+
+	r.Route("/v1/auth", func(r chi.Router) {
+		r.Post("/register", authHandler.Register)
+		r.Post("/login", authHandler.Login)
+	})
+
+	r.Route("/v1/links", func(r chi.Router) {
+		// TODO(T-06): add auth middleware — POST is optionally authenticated (guest ok),
+		// GET and DELETE require authentication.
+		r.Post("/", linkHandler.CreateLink)
+		r.Get("/", linkHandler.ListLinks)
+		r.Delete("/{slug}", linkHandler.DeleteLink)
+		r.Get("/{slug}/stats", linkHandler.Stats)
+	})
+
+	// Redirect catch-all — must be registered after /healthz and /v1/* to avoid conflicts.
+	r.Get("/{slug}", redirectHandler.Redirect)
 
 	srv := &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      r,
 		ReadTimeout:  cfg.RequestTimeout,
 		WriteTimeout: cfg.RequestTimeout,
-		IdleTimeout:  60 * time.Second,
+		IdleTimeout:  cfg.IdleTimeout,
 	}
 
+	// Start click tracking worker with its own cancellation so we can
+	// stop it after the HTTP server has drained all in-flight requests.
+	clickCtx, clickStop := context.WithCancel(context.Background())
+	clickDone := make(chan struct{})
+	go func() {
+		defer close(clickDone)
+		clickSvc.Run(clickCtx)
+	}()
+
 	// Start server in a goroutine.
+	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("slinkapi starting", zap.String("addr", srv.Addr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("slinkapi error", zap.Error(err))
+			errCh <- err
 		}
 	}()
 
-	// Wait for interrupt signal.
-	<-ctx.Done()
-	logger.Info("shutting down slinkapi")
+	// Wait for interrupt signal or server error.
+	select {
+	case <-ctx.Done():
+		logger.Info("shutting down slinkapi")
+	case err := <-errCh:
+		logger.Error("slinkapi error", zap.Error(err))
+		stop()
+	}
 
+	// 1. Shutdown HTTP server first — drains in-flight requests (which may record clicks).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Fatal("slinkapi shutdown error", zap.Error(err))
 	}
+
+	// 2. Stop click worker — drains remaining channel items and flushes.
+	clickStop()
+	<-clickDone
 	logger.Info("slinkapi stopped")
 }
 
