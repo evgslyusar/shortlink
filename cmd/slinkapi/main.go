@@ -90,6 +90,8 @@ func main() {
 	})
 
 	r.Route("/v1/links", func(r chi.Router) {
+		// TODO(T-06): add auth middleware — POST is optionally authenticated (guest ok),
+		// GET and DELETE require authentication.
 		r.Post("/", linkHandler.CreateLink)
 		r.Get("/", linkHandler.ListLinks)
 		r.Delete("/{slug}", linkHandler.DeleteLink)

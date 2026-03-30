@@ -68,17 +68,8 @@ func (r *LinkPostgres) FindBySlug(ctx context.Context, slug string) (*domain.Lin
 }
 
 // ListByUser returns a paginated list of links owned by the given user,
-// along with the total count. page is 1-based; perPage is clamped to 1-100.
+// along with the total count. Expects already-validated page and perPage values.
 func (r *LinkPostgres) ListByUser(ctx context.Context, userID string, page, perPage int) ([]domain.Link, int, error) {
-	if page < 1 {
-		page = 1
-	}
-	if perPage < 1 {
-		perPage = 20
-	}
-	if perPage > 100 {
-		perPage = 100
-	}
 	offset := (page - 1) * perPage
 
 	// Count total.
@@ -117,18 +108,19 @@ func (r *LinkPostgres) ListByUser(ctx context.Context, userID string, page, perP
 	return links, total, nil
 }
 
-// DeleteBySlug removes a link by its slug.
-// Returns domain.ErrNotFound if no link existed with the given slug.
-func (r *LinkPostgres) DeleteBySlug(ctx context.Context, slug string) error {
-	const query = `DELETE FROM links WHERE slug = $1`
+// DeleteBySlugAndUser removes a link by slug, only if owned by the given user.
+// Returns domain.ErrNotFound if no matching link exists, which covers both
+// "slug does not exist" and "slug exists but belongs to another user".
+func (r *LinkPostgres) DeleteBySlugAndUser(ctx context.Context, slug, userID string) error {
+	const query = `DELETE FROM links WHERE slug = $1 AND user_id = $2`
 
-	result, err := r.db.Exec(ctx, query, slug)
+	result, err := r.db.Exec(ctx, query, slug, userID)
 	if err != nil {
-		return fmt.Errorf("link_postgres.DeleteBySlug: %w", err)
+		return fmt.Errorf("link_postgres.DeleteBySlugAndUser: %w", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("link_postgres.DeleteBySlug: %w", domain.ErrNotFound)
+		return fmt.Errorf("link_postgres.DeleteBySlugAndUser: %w", domain.ErrNotFound)
 	}
 
 	return nil

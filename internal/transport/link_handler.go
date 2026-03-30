@@ -59,9 +59,10 @@ type createLinkRequest struct {
 }
 
 type createLinkResponse struct {
-	Slug      string     `json:"slug"`
-	ShortURL  string     `json:"short_url"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	Slug        string     `json:"slug"`
+	ShortURL    string     `json:"short_url"`
+	OriginalURL string     `json:"original_url"`
+	ExpiresAt   *time.Time `json:"expires_at"`
 }
 
 type linkItem struct {
@@ -80,7 +81,7 @@ type listLinksResponse struct {
 func (h *LinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeJSON[createLinkRequest](w, r)
 	if err != nil {
-		respondError(w, r, http.StatusUnprocessableEntity, ErrCodeValidation, err.Error())
+		respondError(w, r, http.StatusBadRequest, ErrCodeValidation, "invalid request body")
 		return
 	}
 
@@ -95,9 +96,10 @@ func (h *LinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondData(w, r, http.StatusCreated, createLinkResponse{
-		Slug:      link.Slug,
-		ShortURL:  h.baseURL + "/" + link.Slug,
-		ExpiresAt: link.ExpiresAt,
+		Slug:        link.Slug,
+		ShortURL:    h.baseURL + "/" + link.Slug,
+		OriginalURL: link.OriginalURL,
+		ExpiresAt:   link.ExpiresAt,
 	})
 }
 
@@ -175,13 +177,3 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 	return v
 }
 
-// getUserID extracts the user ID from context. Returns empty string if not set.
-// The auth middleware (T-06) will set this value.
-func getUserID(ctx context.Context) string {
-	id, _ := ctx.Value(ctxKeyUserID).(string)
-	return id
-}
-
-type ctxKey string
-
-const ctxKeyUserID ctxKey = "user_id"

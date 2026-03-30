@@ -68,14 +68,28 @@ func (f *fakeLinksByUserLister) ListByUser(_ context.Context, _ string, _, _ int
 }
 
 type fakeLinkDeleter struct {
+	links   map[string]string // slug -> userID
 	deleted []string
 	err     error
 }
 
-func (f *fakeLinkDeleter) DeleteBySlug(_ context.Context, slug string) error {
+func newFakeLinkDeleter() *fakeLinkDeleter {
+	return &fakeLinkDeleter{links: make(map[string]string)}
+}
+
+func (f *fakeLinkDeleter) addLink(slug, userID string) {
+	f.links[slug] = userID
+}
+
+func (f *fakeLinkDeleter) DeleteBySlugAndUser(_ context.Context, slug, userID string) error {
 	if f.err != nil {
 		return f.err
 	}
+	ownerID, exists := f.links[slug]
+	if !exists || ownerID != userID {
+		return domain.ErrNotFound
+	}
+	delete(f.links, slug)
 	f.deleted = append(f.deleted, slug)
 	return nil
 }
@@ -181,14 +195,12 @@ func TestCreateLink(t *testing.T) {
 	})
 
 	t.Run("collision retry succeeds on third attempt", func(t *testing.T) {
-		// Finder returns "found" for the first 2 generated slugs, then "not found".
 		callCount := 0
-		finder := &countingFinder{
+		creator := &countingCreator{
 			maxCollisions: 2,
 			callCount:     &callCount,
 		}
-		creator := newFakeLinkCreator()
-		svc := newLinkService(creator, finder, &fakeLinksByUserLister{}, &fakeLinkDeleter{})
+		svc := newLinkService(creator, newFakeLinkBySlugFinder(), &fakeLinksByUserLister{}, newFakeLinkDeleter())
 
 		link, err := svc.CreateLink(context.Background(), "", "https://example.com", "")
 		if err != nil {
@@ -197,20 +209,18 @@ func TestCreateLink(t *testing.T) {
 		if link.Slug == "" {
 			t.Error("expected non-empty slug")
 		}
-		// Finder was called 3 times: 2 collisions + 1 available.
+		// Creator was called 3 times: 2 collisions + 1 success.
 		if callCount != 3 {
-			t.Errorf("expected 3 FindBySlug calls, got %d", callCount)
+			t.Errorf("expected 3 CreateLink calls, got %d", callCount)
 		}
 	})
 
 	t.Run("all retries exhausted", func(t *testing.T) {
-		// Finder always returns "found" (slug exists).
-		finder := &countingFinder{
+		creator := &countingCreator{
 			maxCollisions: 100, // more than maxSlugRetries
 			callCount:     new(int),
 		}
-		creator := newFakeLinkCreator()
-		svc := newLinkService(creator, finder, &fakeLinksByUserLister{}, &fakeLinkDeleter{})
+		svc := newLinkService(creator, newFakeLinkBySlugFinder(), &fakeLinksByUserLister{}, newFakeLinkDeleter())
 
 		_, err := svc.CreateLink(context.Background(), "", "https://example.com", "")
 		if !errors.Is(err, domain.ErrAlreadyExists) {
@@ -219,18 +229,18 @@ func TestCreateLink(t *testing.T) {
 	})
 }
 
-// countingFinder simulates slug collisions for the first N calls.
-type countingFinder struct {
+// countingCreator simulates slug collisions for the first N CreateLink calls.
+type countingCreator struct {
 	maxCollisions int
 	callCount     *int
 }
 
-func (f *countingFinder) FindBySlug(_ context.Context, slug string) (*domain.Link, error) {
+func (f *countingCreator) CreateLink(_ context.Context, _ *domain.Link) error {
 	*f.callCount++
 	if *f.callCount <= f.maxCollisions {
-		return &domain.Link{Slug: slug}, nil // slug exists (collision)
+		return domain.ErrAlreadyExists // slug collision
 	}
-	return nil, domain.ErrNotFound // slug available
+	return nil // success
 }
 
 // --- DeleteLink tests ---
@@ -239,7 +249,8 @@ func TestDeleteLink(t *testing.T) {
 	t.Run("owner deletes own link", func(t *testing.T) {
 		finder := newFakeLinkBySlugFinder()
 		finder.addLink(&domain.Link{Slug: "test", UserID: ptr("user-1")})
-		deleter := &fakeLinkDeleter{}
+		deleter := newFakeLinkDeleter()
+		deleter.addLink("test", "user-1")
 		svc := newLinkService(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, deleter)
 
 		err := svc.DeleteLink(context.Background(), "user-1", "test")
@@ -254,7 +265,9 @@ func TestDeleteLink(t *testing.T) {
 	t.Run("non-owner gets forbidden", func(t *testing.T) {
 		finder := newFakeLinkBySlugFinder()
 		finder.addLink(&domain.Link{Slug: "test", UserID: ptr("user-1")})
-		svc := newLinkService(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, &fakeLinkDeleter{})
+		deleter := newFakeLinkDeleter()
+		deleter.addLink("test", "user-1")
+		svc := newLinkService(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, deleter)
 
 		err := svc.DeleteLink(context.Background(), "user-2", "test")
 		if !errors.Is(err, domain.ErrForbidden) {
@@ -264,11 +277,49 @@ func TestDeleteLink(t *testing.T) {
 
 	t.Run("slug not found", func(t *testing.T) {
 		finder := newFakeLinkBySlugFinder()
-		svc := newLinkService(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, &fakeLinkDeleter{})
+		deleter := newFakeLinkDeleter()
+		svc := newLinkService(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, deleter)
 
 		err := svc.DeleteLink(context.Background(), "user-1", "nonexistent")
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+	})
+}
+
+// --- ListLinks tests ---
+
+func TestListLinks(t *testing.T) {
+	t.Run("returns links and total", func(t *testing.T) {
+		lister := &fakeLinksByUserLister{
+			links: []domain.Link{
+				{Slug: "aaa", OriginalURL: "https://example.com"},
+				{Slug: "bbb", OriginalURL: "https://other.com"},
+			},
+			total: 5,
+		}
+		svc := newLinkService(newFakeLinkCreator(), newFakeLinkBySlugFinder(), lister, newFakeLinkDeleter())
+
+		links, total, err := svc.ListLinks(context.Background(), "user-1", 1, 20)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(links) != 2 {
+			t.Errorf("expected 2 links, got %d", len(links))
+		}
+		if total != 5 {
+			t.Errorf("expected total 5, got %d", total)
+		}
+	})
+
+	t.Run("clamps perPage to 100", func(t *testing.T) {
+		lister := &fakeLinksByUserLister{}
+		svc := newLinkService(newFakeLinkCreator(), newFakeLinkBySlugFinder(), lister, newFakeLinkDeleter())
+
+		// Should not error even with perPage > 100 (clamped by service).
+		_, _, err := svc.ListLinks(context.Background(), "user-1", 1, 500)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }

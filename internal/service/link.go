@@ -33,9 +33,9 @@ type LinksByUserLister interface {
 	ListByUser(ctx context.Context, userID string, page, perPage int) ([]domain.Link, int, error)
 }
 
-// LinkDeleter removes a link by slug.
+// LinkDeleter removes a link by slug and owner atomically.
 type LinkDeleter interface {
-	DeleteBySlug(ctx context.Context, slug string) error
+	DeleteBySlugAndUser(ctx context.Context, slug, userID string) error
 }
 
 // LinkService handles link creation, listing, and deletion.
@@ -71,39 +71,74 @@ func (s *LinkService) CreateLink(ctx context.Context, ownerID, rawURL, customSlu
 		return nil, err
 	}
 
-	slug, err := s.resolveSlug(ctx, customSlug)
-	if err != nil {
-		return nil, err
+	if customSlug != "" {
+		if err := domain.ValidateCustomSlug(customSlug); err != nil {
+			return nil, err
+		}
 	}
 
-	link := &domain.Link{
-		ID:          uuid.NewString(),
-		Slug:        slug,
-		OriginalURL: rawURL,
-		CreatedAt:   time.Now().UTC(),
+	now := time.Now().UTC()
+
+	buildLink := func(slug string) *domain.Link {
+		link := &domain.Link{
+			ID:          uuid.NewString(),
+			Slug:        slug,
+			OriginalURL: rawURL,
+			CreatedAt:   now,
+		}
+		if ownerID != "" {
+			link.UserID = &ownerID
+		} else {
+			exp := now.Add(guestLinkExpiry)
+			link.ExpiresAt = &exp
+		}
+		return link
 	}
 
-	if ownerID != "" {
-		link.UserID = &ownerID
-	} else {
-		exp := time.Now().UTC().Add(guestLinkExpiry)
-		link.ExpiresAt = &exp
+	// Custom slug: single attempt, no retry.
+	if customSlug != "" {
+		link := buildLink(customSlug)
+		if err := s.creator.CreateLink(ctx, link); err != nil {
+			return nil, fmt.Errorf("link.CreateLink: %w", err)
+		}
+		s.logger.Info("link created", zap.String("slug", link.Slug), zap.String("link_id", link.ID))
+		return link, nil
 	}
 
-	if err := s.creator.CreateLink(ctx, link); err != nil {
-		return nil, fmt.Errorf("link.CreateLink: %w", err)
+	// Auto-generated slug: retry on collision.
+	for range maxSlugRetries {
+		slug, err := domain.GenerateSlug()
+		if err != nil {
+			return nil, fmt.Errorf("link.CreateLink: %w", err)
+		}
+
+		link := buildLink(slug)
+		err = s.creator.CreateLink(ctx, link)
+		if err == nil {
+			s.logger.Info("link created", zap.String("slug", link.Slug), zap.String("link_id", link.ID))
+			return link, nil
+		}
+		if !errors.Is(err, domain.ErrAlreadyExists) {
+			return nil, fmt.Errorf("link.CreateLink: %w", err)
+		}
+		// slug collision, retry with a new slug
 	}
 
-	s.logger.Info("link created",
-		zap.String("slug", link.Slug),
-		zap.String("link_id", link.ID),
-	)
-
-	return link, nil
+	return nil, fmt.Errorf("link.CreateLink: failed after %d attempts: %w", maxSlugRetries, domain.ErrAlreadyExists)
 }
 
 // ListLinks returns a paginated list of links owned by the given user.
 func (s *LinkService) ListLinks(ctx context.Context, userID string, page, perPage int) ([]domain.Link, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 20
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+
 	links, total, err := s.lister.ListByUser(ctx, userID, page, perPage)
 	if err != nil {
 		return nil, 0, fmt.Errorf("link.ListLinks: %w", err)
@@ -111,58 +146,34 @@ func (s *LinkService) ListLinks(ctx context.Context, userID string, page, perPag
 	return links, total, nil
 }
 
-// DeleteLink deletes a link by slug, verifying ownership.
+// DeleteLink deletes a link by slug, verifying ownership atomically.
+// Returns ErrNotFound if the slug does not exist, ErrForbidden if owned by another user.
 func (s *LinkService) DeleteLink(ctx context.Context, userID, slug string) error {
-	link, err := s.finder.FindBySlug(ctx, slug)
-	if err != nil {
+	err := s.deleter.DeleteBySlugAndUser(ctx, slug, userID)
+	if err == nil {
+		s.logger.Info("link deleted", zap.String("slug", slug), zap.String("user_id", userID))
+		return nil
+	}
+
+	if !errors.Is(err, domain.ErrNotFound) {
 		return fmt.Errorf("link.DeleteLink: %w", err)
+	}
+
+	// Atomic delete returned "not found" — determine if slug doesn't exist or belongs to another user.
+	link, findErr := s.finder.FindBySlug(ctx, slug)
+	if findErr != nil {
+		// Slug truly doesn't exist.
+		return fmt.Errorf("link.DeleteLink: %w", domain.ErrNotFound)
 	}
 
 	if !link.IsOwnedBy(userID) {
 		return domain.ErrForbidden
 	}
 
-	if err := s.deleter.DeleteBySlug(ctx, slug); err != nil {
-		return fmt.Errorf("link.DeleteLink: %w", err)
-	}
-
-	s.logger.Info("link deleted",
-		zap.String("slug", slug),
-		zap.String("user_id", userID),
-	)
-
-	return nil
+	// Link exists and is owned by this user but delete failed — unexpected.
+	return fmt.Errorf("link.DeleteLink: %w", err)
 }
 
-func (s *LinkService) resolveSlug(ctx context.Context, customSlug string) (string, error) {
-	if customSlug != "" {
-		if err := domain.ValidateCustomSlug(customSlug); err != nil {
-			return "", err
-		}
-		return customSlug, nil
-	}
-
-	for range maxSlugRetries {
-		slug, err := domain.GenerateSlug()
-		if err != nil {
-			return "", fmt.Errorf("link.resolveSlug: %w", err)
-		}
-
-		// Check if slug is already taken by doing a dry-run find.
-		// We rely on the DB unique constraint as the source of truth,
-		// but pre-checking avoids unnecessary INSERT round-trips.
-		_, err = s.finder.FindBySlug(ctx, slug)
-		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				return slug, nil // slug is available
-			}
-			return "", fmt.Errorf("link.resolveSlug: %w", err)
-		}
-		// slug exists, retry
-	}
-
-	return "", fmt.Errorf("link.resolveSlug: failed to generate unique slug after %d attempts: %w", maxSlugRetries, domain.ErrAlreadyExists)
-}
 
 func validateURL(rawURL string) error {
 	u, err := url.ParseRequestURI(rawURL)

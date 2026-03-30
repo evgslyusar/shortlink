@@ -49,7 +49,7 @@ type userResponse struct {
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeJSON[authRequest](w, r)
 	if err != nil {
-		respondError(w, r, http.StatusUnprocessableEntity, ErrCodeValidation, err.Error())
+		respondError(w, r, http.StatusBadRequest, ErrCodeValidation, "invalid request body")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	req, err := decodeJSON[authRequest](w, r)
 	if err != nil {
-		respondError(w, r, http.StatusUnprocessableEntity, ErrCodeValidation, err.Error())
+		respondError(w, r, http.StatusBadRequest, ErrCodeValidation, "invalid request body")
 		return
 	}
 
