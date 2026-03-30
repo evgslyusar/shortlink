@@ -1,7 +1,13 @@
 .env.local
-bin/
 *.exe
 
-# Compiled binaries
+# Build output
+bin/
 /slinkapi
 /slinkbot
+
+# Generated keys
+keys/
+
+# OS
+.DS_Store
