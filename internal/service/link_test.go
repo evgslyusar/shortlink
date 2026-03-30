@@ -94,6 +94,49 @@ func (f *fakeLinkDeleter) DeleteBySlugAndUser(_ context.Context, slug, userID st
 	return nil
 }
 
+type fakeLinkCache struct {
+	store  map[string]string
+	ttls   map[string]time.Duration
+	getErr error
+	setErr error
+	delErr error
+}
+
+func newFakeLinkCache() *fakeLinkCache {
+	return &fakeLinkCache{
+		store: make(map[string]string),
+		ttls:  make(map[string]time.Duration),
+	}
+}
+
+func (f *fakeLinkCache) GetOriginalURL(_ context.Context, slug string) (string, error) {
+	if f.getErr != nil {
+		return "", f.getErr
+	}
+	url, ok := f.store[slug]
+	if !ok {
+		return "", domain.ErrNotFound
+	}
+	return url, nil
+}
+
+func (f *fakeLinkCache) SetOriginalURL(_ context.Context, slug, url string, ttl time.Duration) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	f.store[slug] = url
+	f.ttls[slug] = ttl
+	return nil
+}
+
+func (f *fakeLinkCache) DeleteOriginalURL(_ context.Context, slug string) error {
+	if f.delErr != nil {
+		return f.delErr
+	}
+	delete(f.store, slug)
+	return nil
+}
+
 // --- helpers ---
 
 func newLinkService(
@@ -102,7 +145,17 @@ func newLinkService(
 	lister service.LinksByUserLister,
 	deleter service.LinkDeleter,
 ) *service.LinkService {
-	return service.NewLinkService(creator, finder, lister, deleter, zap.NewNop())
+	return service.NewLinkService(creator, finder, lister, deleter, newFakeLinkCache(), zap.NewNop())
+}
+
+func newLinkServiceWithCache(
+	creator service.LinkCreator,
+	finder service.LinkBySlugFinder,
+	lister service.LinksByUserLister,
+	deleter service.LinkDeleter,
+	cache *fakeLinkCache,
+) *service.LinkService {
+	return service.NewLinkService(creator, finder, lister, deleter, cache, zap.NewNop())
 }
 
 func ptr(s string) *string { return &s }
@@ -285,6 +338,170 @@ func TestDeleteLink(t *testing.T) {
 			t.Fatalf("expected ErrNotFound, got %v", err)
 		}
 	})
+}
+
+// --- ResolveSlug tests ---
+
+func TestResolveSlug(t *testing.T) {
+	t.Run("cache hit returns URL without DB call", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		cache.store["cached"] = "https://cached.com"
+		finder := newFakeLinkBySlugFinder() // empty — should not be called
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		url, err := svc.ResolveSlug(context.Background(), "cached")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://cached.com" {
+			t.Errorf("expected 'https://cached.com', got %q", url)
+		}
+	})
+
+	t.Run("cache miss hits DB and populates cache", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		finder := newFakeLinkBySlugFinder()
+		finder.addLink(&domain.Link{Slug: "db-slug", OriginalURL: "https://db.com"})
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		url, err := svc.ResolveSlug(context.Background(), "db-slug")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://db.com" {
+			t.Errorf("expected 'https://db.com', got %q", url)
+		}
+		// Verify cache was populated.
+		if cache.store["db-slug"] != "https://db.com" {
+			t.Error("expected cache to be populated")
+		}
+	})
+
+	t.Run("cache error falls back to DB", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		cache.getErr = errors.New("redis down")
+		finder := newFakeLinkBySlugFinder()
+		finder.addLink(&domain.Link{Slug: "fallback", OriginalURL: "https://fallback.com"})
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		url, err := svc.ResolveSlug(context.Background(), "fallback")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://fallback.com" {
+			t.Errorf("expected 'https://fallback.com', got %q", url)
+		}
+	})
+
+	t.Run("link not found in DB returns ErrNotFound", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		finder := newFakeLinkBySlugFinder()
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		_, err := svc.ResolveSlug(context.Background(), "missing")
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("expired link returns ErrNotFound", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		finder := newFakeLinkBySlugFinder()
+		past := time.Now().Add(-time.Hour)
+		finder.addLink(&domain.Link{Slug: "expired", OriginalURL: "https://old.com", ExpiresAt: &past})
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		_, err := svc.ResolveSlug(context.Background(), "expired")
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("expected ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("link with expires_at sets correct TTL", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		finder := newFakeLinkBySlugFinder()
+		future := time.Now().Add(2 * time.Hour)
+		finder.addLink(&domain.Link{Slug: "ttl-test", OriginalURL: "https://ttl.com", ExpiresAt: &future})
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		_, err := svc.ResolveSlug(context.Background(), "ttl-test")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		ttl := cache.ttls["ttl-test"]
+		// TTL should be approximately 2 hours (within 1 minute tolerance).
+		if ttl < 119*time.Minute || ttl > 121*time.Minute {
+			t.Errorf("expected TTL ~2h, got %v", ttl)
+		}
+	})
+
+	t.Run("cache set error still returns URL (graceful degradation)", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		cache.setErr = errors.New("redis write error")
+		finder := newFakeLinkBySlugFinder()
+		finder.addLink(&domain.Link{Slug: "set-err", OriginalURL: "https://seterr.com"})
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		url, err := svc.ResolveSlug(context.Background(), "set-err")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://seterr.com" {
+			t.Errorf("expected 'https://seterr.com', got %q", url)
+		}
+	})
+
+	t.Run("link without expires_at uses default 24h TTL", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		finder := newFakeLinkBySlugFinder()
+		finder.addLink(&domain.Link{Slug: "no-exp", OriginalURL: "https://noexp.com"})
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		_, err := svc.ResolveSlug(context.Background(), "no-exp")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		ttl := cache.ttls["no-exp"]
+		if ttl != 24*time.Hour {
+			t.Errorf("expected TTL 24h, got %v", ttl)
+		}
+	})
+}
+
+func TestDeleteLinkInvalidatesCache(t *testing.T) {
+	cache := newFakeLinkCache()
+	cache.store["del-test"] = "https://cached.com"
+	finder := newFakeLinkBySlugFinder()
+	finder.addLink(&domain.Link{Slug: "del-test", UserID: ptr("user-1")})
+	deleter := newFakeLinkDeleter()
+	deleter.addLink("del-test", "user-1")
+	svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, deleter, cache)
+
+	err := svc.DeleteLink(context.Background(), "user-1", "del-test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, exists := cache.store["del-test"]; exists {
+		t.Error("expected cache entry to be deleted")
+	}
+}
+
+func TestDeleteLinkCacheErrorStillSucceeds(t *testing.T) {
+	cache := newFakeLinkCache()
+	cache.delErr = errors.New("redis delete error")
+	finder := newFakeLinkBySlugFinder()
+	finder.addLink(&domain.Link{Slug: "del-err", UserID: ptr("user-1")})
+	deleter := newFakeLinkDeleter()
+	deleter.addLink("del-err", "user-1")
+	svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, deleter, cache)
+
+	err := svc.DeleteLink(context.Background(), "user-1", "del-err")
+	if err != nil {
+		t.Fatalf("expected success despite cache error, got %v", err)
+	}
+	if len(deleter.deleted) != 1 {
+		t.Error("expected DB delete to succeed")
+	}
 }
 
 // --- ListLinks tests ---

@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	maxSlugRetries    = 3
-	guestLinkExpiry   = 7 * 24 * time.Hour
+	maxSlugRetries  = 3
+	guestLinkExpiry = 7 * 24 * time.Hour
+	defaultCacheTTL = 24 * time.Hour
 )
 
 // LinkCreator persists a new link.
@@ -38,12 +39,20 @@ type LinkDeleter interface {
 	DeleteBySlugAndUser(ctx context.Context, slug, userID string) error
 }
 
-// LinkService handles link creation, listing, and deletion.
+// LinkCache provides slug→URL caching.
+type LinkCache interface {
+	GetOriginalURL(ctx context.Context, slug string) (string, error)
+	SetOriginalURL(ctx context.Context, slug, url string, ttl time.Duration) error
+	DeleteOriginalURL(ctx context.Context, slug string) error
+}
+
+// LinkService handles link creation, listing, deletion, and resolution.
 type LinkService struct {
 	creator LinkCreator
 	finder  LinkBySlugFinder
 	lister  LinksByUserLister
 	deleter LinkDeleter
+	cache   LinkCache
 	logger  *zap.Logger
 }
 
@@ -53,6 +62,7 @@ func NewLinkService(
 	finder LinkBySlugFinder,
 	lister LinksByUserLister,
 	deleter LinkDeleter,
+	cache LinkCache,
 	logger *zap.Logger,
 ) *LinkService {
 	return &LinkService{
@@ -60,6 +70,7 @@ func NewLinkService(
 		finder:  finder,
 		lister:  lister,
 		deleter: deleter,
+		cache:   cache,
 		logger:  logger,
 	}
 }
@@ -151,6 +162,13 @@ func (s *LinkService) ListLinks(ctx context.Context, userID string, page, perPag
 func (s *LinkService) DeleteLink(ctx context.Context, userID, slug string) error {
 	err := s.deleter.DeleteBySlugAndUser(ctx, slug, userID)
 	if err == nil {
+		// Use a detached context for cache invalidation — the DB delete already
+		// committed, so cache cleanup should proceed even if the request is cancelled.
+		cacheCtx, cacheCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cacheCancel()
+		if cacheErr := s.cache.DeleteOriginalURL(cacheCtx, slug); cacheErr != nil {
+			s.logger.Warn("cache delete error", zap.String("slug", slug), zap.Error(cacheErr))
+		}
 		s.logger.Info("link deleted", zap.String("slug", slug), zap.String("user_id", userID))
 		return nil
 	}
@@ -174,6 +192,41 @@ func (s *LinkService) DeleteLink(ctx context.Context, userID, slug string) error
 	return fmt.Errorf("link.DeleteLink: %w", err)
 }
 
+
+// ResolveSlug returns the original URL for a slug, using cache where possible.
+// Returns domain.ErrNotFound if the slug does not exist or the link is expired.
+func (s *LinkService) ResolveSlug(ctx context.Context, slug string) (string, error) {
+	// 1. Try cache.
+	originalURL, err := s.cache.GetOriginalURL(ctx, slug)
+	if err == nil {
+		return originalURL, nil
+	}
+	if !errors.Is(err, domain.ErrNotFound) {
+		s.logger.Warn("cache get error, falling back to DB", zap.String("slug", slug), zap.Error(err))
+	}
+
+	// 2. Cache miss or error — hit DB.
+	link, err := s.finder.FindBySlug(ctx, slug)
+	if err != nil {
+		return "", fmt.Errorf("link.ResolveSlug: %w", err)
+	}
+
+	// 3. Compute TTL and check expiry in one step.
+	ttl := defaultCacheTTL
+	if link.ExpiresAt != nil {
+		ttl = time.Until(*link.ExpiresAt)
+		if ttl <= 0 {
+			return "", fmt.Errorf("link.ResolveSlug: link expired: %w", domain.ErrNotFound)
+		}
+	}
+
+	// 4. Populate cache (best-effort).
+	if cacheErr := s.cache.SetOriginalURL(ctx, slug, link.OriginalURL, ttl); cacheErr != nil {
+		s.logger.Warn("cache set error", zap.String("slug", slug), zap.Error(cacheErr))
+	}
+
+	return link.OriginalURL, nil
+}
 
 func validateURL(rawURL string) error {
 	u, err := url.ParseRequestURI(rawURL)
