@@ -2,7 +2,6 @@ package transport
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -48,7 +47,7 @@ type userResponse struct {
 
 // Register handles POST /v1/auth/register.
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeJSON[authRequest](r)
+	req, err := decodeJSON[authRequest](w, r)
 	if err != nil {
 		respondError(w, r, http.StatusUnprocessableEntity, ErrCodeValidation, err.Error())
 		return
@@ -70,7 +69,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 // Login handles POST /v1/auth/login.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeJSON[authRequest](r)
+	req, err := decodeJSON[authRequest](w, r)
 	if err != nil {
 		respondError(w, r, http.StatusUnprocessableEntity, ErrCodeValidation, err.Error())
 		return
@@ -88,25 +87,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		UserID: user.ID,
 		Email:  user.Email,
 	})
-}
-
-func mapError(err error) (status int, code, message string) {
-	switch {
-	case errors.Is(err, domain.ErrAlreadyExists):
-		return http.StatusConflict, ErrCodeConflict, "already exists"
-	case errors.Is(err, domain.ErrNotFound):
-		return http.StatusNotFound, ErrCodeNotFound, "not found"
-	case errors.Is(err, domain.ErrForbidden):
-		return http.StatusForbidden, ErrCodeForbidden, "forbidden"
-	case errors.Is(err, domain.ErrUnauthorized):
-		return http.StatusUnauthorized, ErrCodeUnauthorized, "invalid credentials"
-	default:
-		var ve *domain.ValidationError
-		if errors.As(err, &ve) {
-			return http.StatusUnprocessableEntity, ErrCodeValidation, ve.Error()
-		}
-		return http.StatusInternalServerError, ErrCodeInternal, "internal error"
-	}
 }
 
 func (h *AuthHandler) logError(err error, status int) {

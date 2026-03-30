@@ -2,8 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
+	"net/mail"
 	"time"
 
 	"go.uber.org/zap"
@@ -68,7 +69,6 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*do
 
 	s.logger.Info("user registered",
 		zap.String("user_id", user.ID),
-		zap.String("email", user.Email),
 	)
 
 	return user, nil
@@ -80,7 +80,10 @@ func (s *AuthService) Register(ctx context.Context, email, password string) (*do
 func (s *AuthService) Login(ctx context.Context, email, password string) (*domain.User, error) {
 	user, err := s.finder.FindByEmail(ctx, email)
 	if err != nil {
-		return nil, domain.ErrUnauthorized
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, domain.ErrUnauthorized
+		}
+		return nil, fmt.Errorf("auth.Login: %w", err)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
@@ -89,14 +92,14 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*domai
 
 	s.logger.Info("user logged in",
 		zap.String("user_id", user.ID),
-		zap.String("email", user.Email),
 	)
 
 	return user, nil
 }
 
 func validateEmail(email string) error {
-	if len(email) <= 3 || !strings.Contains(email, "@") {
+	_, err := mail.ParseAddress(email)
+	if err != nil {
 		return &domain.ValidationError{
 			Field:   "email",
 			Message: "must be a valid email address",

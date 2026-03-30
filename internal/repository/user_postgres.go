@@ -12,22 +12,6 @@ import (
 	"github.com/evgslyusar/shortlink/internal/domain"
 )
 
-// userCreator persists a new user.
-type userCreator interface {
-	CreateUser(ctx context.Context, user *domain.User) error
-}
-
-// userByEmailFinder looks up a user by email address.
-type userByEmailFinder interface {
-	FindByEmail(ctx context.Context, email string) (*domain.User, error)
-}
-
-// compile-time interface checks.
-var (
-	_ userCreator      = (*UserPostgres)(nil)
-	_ userByEmailFinder = (*UserPostgres)(nil)
-)
-
 // UserPostgres implements user persistence against PostgreSQL.
 type UserPostgres struct {
 	db *pgxpool.Pool
