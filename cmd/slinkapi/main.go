@@ -72,6 +72,10 @@ func main() {
 	authSvc := service.NewAuthService(userRepo, userRepo, logger)
 	authHandler := transport.NewAuthHandler(authSvc, authSvc, logger)
 
+	linkRepo := repository.NewLinkPostgres(dbPool)
+	linkSvc := service.NewLinkService(linkRepo, linkRepo, linkRepo, linkRepo, logger)
+	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, cfg.BaseURL, logger)
+
 	// Set up router.
 	r := chi.NewRouter()
 	r.Use(mw.Correlation)
@@ -83,6 +87,14 @@ func main() {
 	r.Route("/v1/auth", func(r chi.Router) {
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
+	})
+
+	r.Route("/v1/links", func(r chi.Router) {
+		// TODO(T-06): add auth middleware — POST is optionally authenticated (guest ok),
+		// GET and DELETE require authentication.
+		r.Post("/", linkHandler.CreateLink)
+		r.Get("/", linkHandler.ListLinks)
+		r.Delete("/{slug}", linkHandler.DeleteLink)
 	})
 
 	srv := &http.Server{

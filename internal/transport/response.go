@@ -42,6 +42,20 @@ func respondData(w http.ResponseWriter, r *http.Request, statusCode int, data an
 	writeJSON(w, statusCode, resp)
 }
 
+func respondDataWithMeta(w http.ResponseWriter, r *http.Request, statusCode int, data any, extra map[string]any) {
+	meta := map[string]any{
+		"request_id": getRequestID(r),
+	}
+	for k, v := range extra {
+		meta[k] = v
+	}
+	resp := successResponse{
+		Data: data,
+		Meta: meta,
+	}
+	writeJSON(w, statusCode, resp)
+}
+
 func respondError(w http.ResponseWriter, r *http.Request, statusCode int, code, message string) {
 	resp := errorResponse{
 		Error: errorBody{
