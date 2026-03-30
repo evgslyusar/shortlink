@@ -13,45 +13,42 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/evgslyusar/shortlink/internal/config"
 	"github.com/evgslyusar/shortlink/internal/telegram"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})).With(slog.String("service", "slinkbot"))
-	slog.SetDefault(logger)
+	logger, err := zap.NewProduction()
+	if err != nil {
+		panic("failed to create logger: " + err.Error())
+	}
+	defer logger.Sync() //nolint:errcheck
+	logger = logger.With(zap.String("service", "slinkbot"))
 
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("failed to load config", slog.String("error", err.Error()))
-		os.Exit(1)
-	}
-
-	if cfg.TelegramToken == "" {
-		logger.Error("TELEGRAM_BOT_TOKEN is required")
-		os.Exit(1)
+		logger.Fatal("failed to load config", zap.Error(err))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bot := telegram.NewHandler(logger, cfg.TelegramToken)
+	bot := telegram.NewHandler(logger, cfg.TelegramBotToken)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /telegram/webhook", bot.HandleWebhook)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"}) //nolint:errcheck
 	})
 
 	addr := fmt.Sprintf("%s:%d", cfg.BotHost, cfg.BotPort)
@@ -64,10 +61,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("slinkbot starting", slog.String("addr", addr))
+		logger.Info("slinkbot starting", zap.String("addr", addr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("slinkbot error", slog.String("error", err.Error()))
-			os.Exit(1)
+			logger.Fatal("slinkbot error", zap.Error(err))
 		}
 	}()
 
@@ -78,8 +74,7 @@ func main() {
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("slinkbot shutdown error", slog.String("error", err.Error()))
-		os.Exit(1)
+		logger.Fatal("slinkbot shutdown error", zap.Error(err))
 	}
 	logger.Info("slinkbot stopped")
 }

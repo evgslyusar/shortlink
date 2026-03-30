@@ -3,21 +3,22 @@ package telegram
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"go.uber.org/zap"
 )
 
 // Handler processes incoming Telegram webhook updates.
 // Service dependencies will be injected here once the domain layer exists.
 type Handler struct {
-	logger *slog.Logger
+	logger *zap.Logger
 	token  string
 }
 
 // NewHandler creates a webhook handler for the Telegram bot.
-func NewHandler(logger *slog.Logger, token string) *Handler {
+func NewHandler(logger *zap.Logger, token string) *Handler {
 	return &Handler{
 		logger: logger,
 		token:  token,
@@ -28,7 +29,7 @@ func NewHandler(logger *slog.Logger, token string) *Handler {
 func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	var update Update
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
-		h.logger.Warn("failed to decode update", slog.String("error", err.Error()))
+		h.logger.Warn("failed to decode update", zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -40,8 +41,8 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	msg := update.Message
 	h.logger.Info("received message",
-		slog.Int64("chat_id", msg.Chat.ID),
-		slog.String("text", msg.Text),
+		zap.Int64("chat_id", msg.Chat.ID),
+		zap.String("text", msg.Text),
 	)
 
 	reply := h.dispatch(msg)
@@ -114,6 +115,6 @@ func (h *Handler) respondJSON(w http.ResponseWriter, chatID int64, text string) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		h.logger.Error("failed to encode response", slog.String("error", err.Error()))
+		h.logger.Error("failed to encode response", zap.Error(err))
 	}
 }

@@ -21,9 +21,15 @@ type Config struct {
 
 	RequestTimeout time.Duration `env:"REQUEST_TIMEOUT" envDefault:"30s"`
 
-	TelegramToken string `env:"TELEGRAM_BOT_TOKEN"`
-	BotHost       string `env:"BOT_HOST" envDefault:"0.0.0.0"`
-	BotPort       int    `env:"BOT_PORT" envDefault:"8081"`
+	JWTPrivateKeyPath string        `env:"JWT_PRIVATE_KEY_PATH,required"`
+	JWTPublicKeyPath  string        `env:"JWT_PUBLIC_KEY_PATH,required"`
+	JWTAccessTTL      time.Duration `env:"JWT_ACCESS_TTL"  envDefault:"15m"`
+	JWTRefreshTTL     time.Duration `env:"JWT_REFRESH_TTL" envDefault:"168h"`
+
+	TelegramBotToken   string `env:"TELEGRAM_BOT_TOKEN,required"`
+	TelegramWebhookURL string `env:"TELEGRAM_WEBHOOK_URL,required"`
+	BotHost            string `env:"BOT_HOST" envDefault:"0.0.0.0"`
+	BotPort            int    `env:"BOT_PORT" envDefault:"8081"`
 }
 
 // Addr returns the host:port string for the HTTP server listener.
