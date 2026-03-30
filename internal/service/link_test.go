@@ -95,45 +95,49 @@ func (f *fakeLinkDeleter) DeleteBySlugAndUser(_ context.Context, slug, userID st
 }
 
 type fakeLinkCache struct {
-	store  map[string]string
-	ttls   map[string]time.Duration
-	getErr error
-	setErr error
-	delErr error
+	urls    map[string]string
+	ids     map[string]string
+	ttls    map[string]time.Duration
+	getErr  error
+	setErr  error
+	delErr  error
 }
 
 func newFakeLinkCache() *fakeLinkCache {
 	return &fakeLinkCache{
-		store: make(map[string]string),
-		ttls:  make(map[string]time.Duration),
+		urls: make(map[string]string),
+		ids:  make(map[string]string),
+		ttls: make(map[string]time.Duration),
 	}
 }
 
-func (f *fakeLinkCache) GetOriginalURL(_ context.Context, slug string) (string, error) {
+func (f *fakeLinkCache) GetLink(_ context.Context, slug string) (string, string, error) {
 	if f.getErr != nil {
-		return "", f.getErr
+		return "", "", f.getErr
 	}
-	url, ok := f.store[slug]
+	url, ok := f.urls[slug]
 	if !ok {
-		return "", domain.ErrNotFound
+		return "", "", domain.ErrNotFound
 	}
-	return url, nil
+	return url, f.ids[slug], nil
 }
 
-func (f *fakeLinkCache) SetOriginalURL(_ context.Context, slug, url string, ttl time.Duration) error {
+func (f *fakeLinkCache) SetLink(_ context.Context, slug, url, linkID string, ttl time.Duration) error {
 	if f.setErr != nil {
 		return f.setErr
 	}
-	f.store[slug] = url
+	f.urls[slug] = url
+	f.ids[slug] = linkID
 	f.ttls[slug] = ttl
 	return nil
 }
 
-func (f *fakeLinkCache) DeleteOriginalURL(_ context.Context, slug string) error {
+func (f *fakeLinkCache) DeleteLink(_ context.Context, slug string) error {
 	if f.delErr != nil {
 		return f.delErr
 	}
-	delete(f.store, slug)
+	delete(f.urls, slug)
+	delete(f.ids, slug)
 	return nil
 }
 
@@ -343,37 +347,47 @@ func TestDeleteLink(t *testing.T) {
 // --- ResolveSlug tests ---
 
 func TestResolveSlug(t *testing.T) {
-	t.Run("cache hit returns URL without DB call", func(t *testing.T) {
+	t.Run("cache hit returns URL and linkID without DB call", func(t *testing.T) {
 		cache := newFakeLinkCache()
-		cache.store["cached"] = "https://cached.com"
+		cache.urls["cached"] = "https://cached.com"
+		cache.ids["cached"] = "link-id-1"
 		finder := newFakeLinkBySlugFinder() // empty — should not be called
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		url, err := svc.ResolveSlug(context.Background(), "cached")
+		url, linkID, err := svc.ResolveSlug(context.Background(), "cached")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if url != "https://cached.com" {
 			t.Errorf("expected 'https://cached.com', got %q", url)
 		}
+		if linkID != "link-id-1" {
+			t.Errorf("expected linkID 'link-id-1', got %q", linkID)
+		}
 	})
 
 	t.Run("cache miss hits DB and populates cache", func(t *testing.T) {
 		cache := newFakeLinkCache()
 		finder := newFakeLinkBySlugFinder()
-		finder.addLink(&domain.Link{Slug: "db-slug", OriginalURL: "https://db.com"})
+		finder.addLink(&domain.Link{ID: "link-2", Slug: "db-slug", OriginalURL: "https://db.com"})
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		url, err := svc.ResolveSlug(context.Background(), "db-slug")
+		url, linkID, err := svc.ResolveSlug(context.Background(), "db-slug")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if url != "https://db.com" {
 			t.Errorf("expected 'https://db.com', got %q", url)
 		}
+		if linkID != "link-2" {
+			t.Errorf("expected linkID 'link-2', got %q", linkID)
+		}
 		// Verify cache was populated.
-		if cache.store["db-slug"] != "https://db.com" {
-			t.Error("expected cache to be populated")
+		if cache.urls["db-slug"] != "https://db.com" {
+			t.Error("expected cache URL to be populated")
+		}
+		if cache.ids["db-slug"] != "link-2" {
+			t.Error("expected cache linkID to be populated")
 		}
 	})
 
@@ -384,7 +398,7 @@ func TestResolveSlug(t *testing.T) {
 		finder.addLink(&domain.Link{Slug: "fallback", OriginalURL: "https://fallback.com"})
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		url, err := svc.ResolveSlug(context.Background(), "fallback")
+		url, _, err := svc.ResolveSlug(context.Background(), "fallback")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -398,7 +412,7 @@ func TestResolveSlug(t *testing.T) {
 		finder := newFakeLinkBySlugFinder()
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		_, err := svc.ResolveSlug(context.Background(), "missing")
+		_, _, err := svc.ResolveSlug(context.Background(), "missing")
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("expected ErrNotFound, got %v", err)
 		}
@@ -411,7 +425,7 @@ func TestResolveSlug(t *testing.T) {
 		finder.addLink(&domain.Link{Slug: "expired", OriginalURL: "https://old.com", ExpiresAt: &past})
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		_, err := svc.ResolveSlug(context.Background(), "expired")
+		_, _, err := svc.ResolveSlug(context.Background(), "expired")
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Fatalf("expected ErrNotFound, got %v", err)
 		}
@@ -424,7 +438,7 @@ func TestResolveSlug(t *testing.T) {
 		finder.addLink(&domain.Link{Slug: "ttl-test", OriginalURL: "https://ttl.com", ExpiresAt: &future})
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		_, err := svc.ResolveSlug(context.Background(), "ttl-test")
+		_, _, err := svc.ResolveSlug(context.Background(), "ttl-test")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -442,7 +456,7 @@ func TestResolveSlug(t *testing.T) {
 		finder.addLink(&domain.Link{Slug: "set-err", OriginalURL: "https://seterr.com"})
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		url, err := svc.ResolveSlug(context.Background(), "set-err")
+		url, _, err := svc.ResolveSlug(context.Background(), "set-err")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -457,7 +471,7 @@ func TestResolveSlug(t *testing.T) {
 		finder.addLink(&domain.Link{Slug: "no-exp", OriginalURL: "https://noexp.com"})
 		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
 
-		_, err := svc.ResolveSlug(context.Background(), "no-exp")
+		_, _, err := svc.ResolveSlug(context.Background(), "no-exp")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -470,7 +484,8 @@ func TestResolveSlug(t *testing.T) {
 
 func TestDeleteLinkInvalidatesCache(t *testing.T) {
 	cache := newFakeLinkCache()
-	cache.store["del-test"] = "https://cached.com"
+	cache.urls["del-test"] = "https://cached.com"
+	cache.ids["del-test"] = "link-1"
 	finder := newFakeLinkBySlugFinder()
 	finder.addLink(&domain.Link{Slug: "del-test", UserID: ptr("user-1")})
 	deleter := newFakeLinkDeleter()
@@ -481,7 +496,7 @@ func TestDeleteLinkInvalidatesCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, exists := cache.store["del-test"]; exists {
+	if _, exists := cache.urls["del-test"]; exists {
 		t.Error("expected cache entry to be deleted")
 	}
 }

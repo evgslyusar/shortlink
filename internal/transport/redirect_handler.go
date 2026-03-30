@@ -4,28 +4,37 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/evgslyusar/shortlink/internal/domain"
 )
 
-// SlugResolver resolves a slug to its original URL.
+// SlugResolver resolves a slug to its original URL and link ID.
 type SlugResolver interface {
-	ResolveSlug(ctx context.Context, slug string) (string, error)
+	ResolveSlug(ctx context.Context, slug string) (originalURL, linkID string, err error)
+}
+
+// ClickRecorder records a click event asynchronously.
+type ClickRecorder interface {
+	Record(click domain.Click)
 }
 
 // RedirectHandler handles short link redirects.
 type RedirectHandler struct {
 	resolver SlugResolver
+	recorder ClickRecorder
 	logger   *zap.Logger
 }
 
 // NewRedirectHandler creates a new RedirectHandler.
-func NewRedirectHandler(resolver SlugResolver, logger *zap.Logger) *RedirectHandler {
+func NewRedirectHandler(resolver SlugResolver, recorder ClickRecorder, logger *zap.Logger) *RedirectHandler {
 	return &RedirectHandler{
 		resolver: resolver,
+		recorder: recorder,
 		logger:   logger,
 	}
 }
@@ -40,7 +49,7 @@ func (h *RedirectHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originalURL, err := h.resolver.ResolveSlug(r.Context(), slug)
+	originalURL, linkID, err := h.resolver.ResolveSlug(r.Context(), slug)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			respondError(w, r, http.StatusNotFound, ErrCodeNotFound, "link not found")
@@ -52,4 +61,22 @@ func (h *RedirectHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, originalURL, http.StatusFound)
+
+	// Record click asynchronously — response is already sent.
+	if linkID != "" {
+		referer := r.Header.Get("Referer")
+		userAgent := r.Header.Get("User-Agent")
+		click := domain.Click{
+			ID:        uuid.NewString(),
+			LinkID:    linkID,
+			ClickedAt: time.Now().UTC(),
+		}
+		if referer != "" {
+			click.Referer = &referer
+		}
+		if userAgent != "" {
+			click.UserAgent = &userAgent
+		}
+		h.recorder.Record(click)
+	}
 }

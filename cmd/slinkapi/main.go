@@ -75,8 +75,12 @@ func main() {
 	linkRepo := repository.NewLinkPostgres(dbPool)
 	linkCache := repository.NewLinkCache(rdb)
 	linkSvc := service.NewLinkService(linkRepo, linkRepo, linkRepo, linkRepo, linkCache, logger)
-	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, cfg.BaseURL, logger)
-	redirectHandler := transport.NewRedirectHandler(linkSvc, logger)
+
+	clickRepo := repository.NewClickPostgres(dbPool)
+	clickSvc := service.NewClickService(clickRepo, clickRepo, linkRepo, logger)
+
+	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, clickSvc, cfg.BaseURL, logger)
+	redirectHandler := transport.NewRedirectHandler(linkSvc, clickSvc, logger)
 
 	// Set up router.
 	r := chi.NewRouter()
@@ -97,6 +101,7 @@ func main() {
 		r.Post("/", linkHandler.CreateLink)
 		r.Get("/", linkHandler.ListLinks)
 		r.Delete("/{slug}", linkHandler.DeleteLink)
+		r.Get("/{slug}/stats", linkHandler.Stats)
 	})
 
 	// Redirect catch-all — must be registered after /healthz and /v1/* to avoid conflicts.
@@ -109,6 +114,13 @@ func main() {
 		WriteTimeout: cfg.RequestTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
 	}
+
+	// Start click tracking worker.
+	clickDone := make(chan struct{})
+	go func() {
+		defer close(clickDone)
+		clickSvc.Run(ctx)
+	}()
 
 	// Start server in a goroutine.
 	errCh := make(chan error, 1)
@@ -134,6 +146,9 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Fatal("slinkapi shutdown error", zap.Error(err))
 	}
+
+	// Wait for click worker to drain and flush remaining clicks.
+	<-clickDone
 	logger.Info("slinkapi stopped")
 }
 

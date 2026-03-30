@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -11,9 +10,13 @@ import (
 	"github.com/evgslyusar/shortlink/internal/domain"
 )
 
-const slugKeyPrefix = "slug:"
+const (
+	slugKeyPrefix = "slug:"
+	fieldURL      = "url"
+	fieldLinkID   = "id"
+)
 
-// LinkCache implements slug→URL caching with Redis.
+// LinkCache implements slug→URL caching with Redis hashes.
 type LinkCache struct {
 	rdb *redis.Client
 }
@@ -23,32 +26,39 @@ func NewLinkCache(rdb *redis.Client) *LinkCache {
 	return &LinkCache{rdb: rdb}
 }
 
-// GetOriginalURL retrieves the cached original URL for a slug.
+// GetLink retrieves the cached original URL and link ID for a slug.
 // Returns domain.ErrNotFound if the key does not exist.
-func (c *LinkCache) GetOriginalURL(ctx context.Context, slug string) (string, error) {
-	val, err := c.rdb.Get(ctx, slugKeyPrefix+slug).Result()
+func (c *LinkCache) GetLink(ctx context.Context, slug string) (originalURL, linkID string, err error) {
+	key := slugKeyPrefix + slug
+	vals, err := c.rdb.HGetAll(ctx, key).Result()
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return "", domain.ErrNotFound
-		}
-		return "", fmt.Errorf("link_cache.GetOriginalURL: %w", err)
+		return "", "", fmt.Errorf("link_cache.GetLink: %w", err)
 	}
-	return val, nil
+	if len(vals) == 0 {
+		return "", "", domain.ErrNotFound
+	}
+	return vals[fieldURL], vals[fieldLinkID], nil
 }
 
-// SetOriginalURL caches the original URL for a slug with the given TTL.
+// SetLink caches the original URL and link ID for a slug with the given TTL.
 // A TTL of 0 means no expiration.
-func (c *LinkCache) SetOriginalURL(ctx context.Context, slug, url string, ttl time.Duration) error {
-	if err := c.rdb.Set(ctx, slugKeyPrefix+slug, url, ttl).Err(); err != nil {
-		return fmt.Errorf("link_cache.SetOriginalURL: %w", err)
+func (c *LinkCache) SetLink(ctx context.Context, slug, originalURL, linkID string, ttl time.Duration) error {
+	key := slugKeyPrefix + slug
+	pipe := c.rdb.Pipeline()
+	pipe.HSet(ctx, key, fieldURL, originalURL, fieldLinkID, linkID)
+	if ttl > 0 {
+		pipe.Expire(ctx, key, ttl)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("link_cache.SetLink: %w", err)
 	}
 	return nil
 }
 
-// DeleteOriginalURL removes the cached URL for a slug.
-func (c *LinkCache) DeleteOriginalURL(ctx context.Context, slug string) error {
+// DeleteLink removes the cached entry for a slug.
+func (c *LinkCache) DeleteLink(ctx context.Context, slug string) error {
 	if err := c.rdb.Del(ctx, slugKeyPrefix+slug).Err(); err != nil {
-		return fmt.Errorf("link_cache.DeleteOriginalURL: %w", err)
+		return fmt.Errorf("link_cache.DeleteLink: %w", err)
 	}
 	return nil
 }

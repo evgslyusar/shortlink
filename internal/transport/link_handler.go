@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/evgslyusar/shortlink/internal/domain"
+	"github.com/evgslyusar/shortlink/internal/service"
 )
 
 // LinkCreatorSvc creates a shortened link.
@@ -27,11 +28,17 @@ type LinkDeleterSvc interface {
 	DeleteLink(ctx context.Context, userID, slug string) error
 }
 
+// LinkStatsSvc returns aggregated click statistics for a link.
+type LinkStatsSvc interface {
+	GetStats(ctx context.Context, userID, slug string) (*service.ClickStats, error)
+}
+
 // LinkHandler handles HTTP requests for link endpoints.
 type LinkHandler struct {
 	creator LinkCreatorSvc
 	lister  LinkListerSvc
 	deleter LinkDeleterSvc
+	stats   LinkStatsSvc
 	baseURL string
 	logger  *zap.Logger
 }
@@ -41,6 +48,7 @@ func NewLinkHandler(
 	creator LinkCreatorSvc,
 	lister LinkListerSvc,
 	deleter LinkDeleterSvc,
+	stats LinkStatsSvc,
 	baseURL string,
 	logger *zap.Logger,
 ) *LinkHandler {
@@ -48,6 +56,7 @@ func NewLinkHandler(
 		creator: creator,
 		lister:  lister,
 		deleter: deleter,
+		stats:   stats,
 		baseURL: baseURL,
 		logger:  logger,
 	}
@@ -157,6 +166,27 @@ func (h *LinkHandler) DeleteLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Stats handles GET /v1/links/{slug}/stats.
+func (h *LinkHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	userID := getUserID(r.Context())
+	if userID == "" {
+		respondError(w, r, http.StatusUnauthorized, ErrCodeUnauthorized, "authentication required")
+		return
+	}
+
+	slug := chi.URLParam(r, "slug")
+
+	stats, err := h.stats.GetStats(r.Context(), userID, slug)
+	if err != nil {
+		status, code, msg := mapError(err)
+		h.logError(err, status)
+		respondError(w, r, status, code, msg)
+		return
+	}
+
+	respondData(w, r, http.StatusOK, stats)
 }
 
 func (h *LinkHandler) logError(err error, status int) {
