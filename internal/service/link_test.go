@@ -435,6 +435,22 @@ func TestResolveSlug(t *testing.T) {
 		}
 	})
 
+	t.Run("cache set error still returns URL (graceful degradation)", func(t *testing.T) {
+		cache := newFakeLinkCache()
+		cache.setErr = errors.New("redis write error")
+		finder := newFakeLinkBySlugFinder()
+		finder.addLink(&domain.Link{Slug: "set-err", OriginalURL: "https://seterr.com"})
+		svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, newFakeLinkDeleter(), cache)
+
+		url, err := svc.ResolveSlug(context.Background(), "set-err")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if url != "https://seterr.com" {
+			t.Errorf("expected 'https://seterr.com', got %q", url)
+		}
+	})
+
 	t.Run("link without expires_at uses default 24h TTL", func(t *testing.T) {
 		cache := newFakeLinkCache()
 		finder := newFakeLinkBySlugFinder()
@@ -467,6 +483,24 @@ func TestDeleteLinkInvalidatesCache(t *testing.T) {
 	}
 	if _, exists := cache.store["del-test"]; exists {
 		t.Error("expected cache entry to be deleted")
+	}
+}
+
+func TestDeleteLinkCacheErrorStillSucceeds(t *testing.T) {
+	cache := newFakeLinkCache()
+	cache.delErr = errors.New("redis delete error")
+	finder := newFakeLinkBySlugFinder()
+	finder.addLink(&domain.Link{Slug: "del-err", UserID: ptr("user-1")})
+	deleter := newFakeLinkDeleter()
+	deleter.addLink("del-err", "user-1")
+	svc := newLinkServiceWithCache(newFakeLinkCreator(), finder, &fakeLinksByUserLister{}, deleter, cache)
+
+	err := svc.DeleteLink(context.Background(), "user-1", "del-err")
+	if err != nil {
+		t.Fatalf("expected success despite cache error, got %v", err)
+	}
+	if len(deleter.deleted) != 1 {
+		t.Error("expected DB delete to succeed")
 	}
 }
 

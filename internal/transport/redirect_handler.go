@@ -34,7 +34,13 @@ func NewRedirectHandler(resolver SlugResolver, logger *zap.Logger) *RedirectHand
 func (h *RedirectHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 
-	url, err := h.resolver.ResolveSlug(r.Context(), slug)
+	// Reject obviously invalid slugs at the transport boundary.
+	if len(slug) == 0 || len(slug) > 12 {
+		respondError(w, r, http.StatusNotFound, ErrCodeNotFound, "link not found")
+		return
+	}
+
+	originalURL, err := h.resolver.ResolveSlug(r.Context(), slug)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			respondError(w, r, http.StatusNotFound, ErrCodeNotFound, "link not found")
@@ -45,5 +51,5 @@ func (h *RedirectHandler) Redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, url, http.StatusFound)
+	http.Redirect(w, r, originalURL, http.StatusFound)
 }

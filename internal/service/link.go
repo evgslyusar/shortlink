@@ -162,7 +162,11 @@ func (s *LinkService) ListLinks(ctx context.Context, userID string, page, perPag
 func (s *LinkService) DeleteLink(ctx context.Context, userID, slug string) error {
 	err := s.deleter.DeleteBySlugAndUser(ctx, slug, userID)
 	if err == nil {
-		if cacheErr := s.cache.DeleteOriginalURL(ctx, slug); cacheErr != nil {
+		// Use a detached context for cache invalidation — the DB delete already
+		// committed, so cache cleanup should proceed even if the request is cancelled.
+		cacheCtx, cacheCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cacheCancel()
+		if cacheErr := s.cache.DeleteOriginalURL(cacheCtx, slug); cacheErr != nil {
 			s.logger.Warn("cache delete error", zap.String("slug", slug), zap.Error(cacheErr))
 		}
 		s.logger.Info("link deleted", zap.String("slug", slug), zap.String("user_id", userID))
@@ -193,9 +197,9 @@ func (s *LinkService) DeleteLink(ctx context.Context, userID, slug string) error
 // Returns domain.ErrNotFound if the slug does not exist or the link is expired.
 func (s *LinkService) ResolveSlug(ctx context.Context, slug string) (string, error) {
 	// 1. Try cache.
-	url, err := s.cache.GetOriginalURL(ctx, slug)
+	originalURL, err := s.cache.GetOriginalURL(ctx, slug)
 	if err == nil {
-		return url, nil
+		return originalURL, nil
 	}
 	if !errors.Is(err, domain.ErrNotFound) {
 		s.logger.Warn("cache get error, falling back to DB", zap.String("slug", slug), zap.Error(err))
@@ -207,21 +211,16 @@ func (s *LinkService) ResolveSlug(ctx context.Context, slug string) (string, err
 		return "", fmt.Errorf("link.ResolveSlug: %w", err)
 	}
 
-	// 3. Check expiry.
-	if link.IsExpired() {
-		return "", domain.ErrNotFound
-	}
-
-	// 4. Compute TTL.
+	// 3. Compute TTL and check expiry in one step.
 	ttl := defaultCacheTTL
 	if link.ExpiresAt != nil {
 		ttl = time.Until(*link.ExpiresAt)
 		if ttl <= 0 {
-			return "", domain.ErrNotFound
+			return "", fmt.Errorf("link.ResolveSlug: link expired: %w", domain.ErrNotFound)
 		}
 	}
 
-	// 5. Populate cache (best-effort).
+	// 4. Populate cache (best-effort).
 	if cacheErr := s.cache.SetOriginalURL(ctx, slug, link.OriginalURL, ttl); cacheErr != nil {
 		s.logger.Warn("cache set error", zap.String("slug", slug), zap.Error(cacheErr))
 	}
