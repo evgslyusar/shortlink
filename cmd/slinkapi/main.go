@@ -73,8 +73,10 @@ func main() {
 	authHandler := transport.NewAuthHandler(authSvc, authSvc, logger)
 
 	linkRepo := repository.NewLinkPostgres(dbPool)
-	linkSvc := service.NewLinkService(linkRepo, linkRepo, linkRepo, linkRepo, logger)
+	linkCache := repository.NewLinkCache(rdb)
+	linkSvc := service.NewLinkService(linkRepo, linkRepo, linkRepo, linkRepo, linkCache, logger)
 	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, cfg.BaseURL, logger)
+	redirectHandler := transport.NewRedirectHandler(linkSvc, logger)
 
 	// Set up router.
 	r := chi.NewRouter()
@@ -96,6 +98,9 @@ func main() {
 		r.Get("/", linkHandler.ListLinks)
 		r.Delete("/{slug}", linkHandler.DeleteLink)
 	})
+
+	// Redirect catch-all — must be registered after /healthz and /v1/* to avoid conflicts.
+	r.Get("/{slug}", redirectHandler.Redirect)
 
 	srv := &http.Server{
 		Addr:         cfg.Addr(),
