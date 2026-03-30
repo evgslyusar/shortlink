@@ -1,6 +1,6 @@
 # T-05: Click Tracking & Stats
 
-**Status:** Todo
+**Status:** Done (PR #8)
 **Branch:** `feature/t-05-click-tracking`
 **Deps:** T-04
 
@@ -110,9 +110,9 @@ flush(buffer) // final flush
 
 ## Acceptance Criteria
 
-- [ ] Click appears in DB within flush interval after redirect
-- [ ] Redirect response time unaffected by click recording
-- [ ] `GET /v1/links/{slug}/stats` returns `{total_clicks, by_day, by_country}`
-- [ ] Stats for non-owned slug: 403; nonexistent: 404
-- [ ] Graceful shutdown drains remaining channel items
-- [ ] Channel full: event dropped, warning logged (not blocked)
+- [x] Click appears in DB within flush interval after redirect
+- [x] Redirect response time unaffected by click recording
+- [x] `GET /v1/links/{slug}/stats` returns `{total_clicks, by_day, by_country}`
+- [x] Stats for non-owned slug: 403; nonexistent: 404
+- [x] Graceful shutdown drains remaining channel items
+- [x] Channel full: event dropped, warning logged (not blocked)
