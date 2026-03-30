@@ -20,6 +20,7 @@ type Config struct {
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
 
 	RequestTimeout time.Duration `env:"REQUEST_TIMEOUT" envDefault:"30s"`
+	IdleTimeout    time.Duration `env:"IDLE_TIMEOUT"    envDefault:"60s"`
 
 	JWTPrivateKeyPath string        `env:"JWT_PRIVATE_KEY_PATH,required"`
 	JWTPublicKeyPath  string        `env:"JWT_PUBLIC_KEY_PATH,required"`

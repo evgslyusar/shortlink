@@ -19,6 +19,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/evgslyusar/shortlink/internal/config"
+	"github.com/evgslyusar/shortlink/internal/repository"
+	"github.com/evgslyusar/shortlink/internal/service"
+	"github.com/evgslyusar/shortlink/internal/transport"
 	mw "github.com/evgslyusar/shortlink/internal/transport/middleware"
 )
 
@@ -64,33 +67,49 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
+	// Set up dependencies.
+	userRepo := repository.NewUserPostgres(dbPool)
+	authSvc := service.NewAuthService(userRepo, userRepo, logger)
+	authHandler := transport.NewAuthHandler(authSvc, authSvc, logger)
+
 	// Set up router.
 	r := chi.NewRouter()
 	r.Use(mw.Correlation)
-	r.Use(mw.Logger(logger))
 	r.Use(mw.Recovery(logger))
+	r.Use(mw.Logger(logger))
 
 	r.Get("/healthz", handleHealthz())
+
+	r.Route("/v1/auth", func(r chi.Router) {
+		r.Post("/register", authHandler.Register)
+		r.Post("/login", authHandler.Login)
+	})
 
 	srv := &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      r,
 		ReadTimeout:  cfg.RequestTimeout,
 		WriteTimeout: cfg.RequestTimeout,
-		IdleTimeout:  60 * time.Second,
+		IdleTimeout:  cfg.IdleTimeout,
 	}
 
 	// Start server in a goroutine.
+	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("slinkapi starting", zap.String("addr", srv.Addr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("slinkapi error", zap.Error(err))
+			errCh <- err
 		}
 	}()
 
-	// Wait for interrupt signal.
-	<-ctx.Done()
-	logger.Info("shutting down slinkapi")
+	// Wait for interrupt signal or server error.
+	select {
+	case <-ctx.Done():
+		logger.Info("shutting down slinkapi")
+	case err := <-errCh:
+		logger.Error("slinkapi error", zap.Error(err))
+		stop()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
