@@ -14,7 +14,38 @@ Read this file completely before starting any task.
 - **Tech stack**: Go 1.22+, PostgreSQL 16, Redis 7, optionally Kafka
 - **Status**: greenfield
 - **Team**: 1 developer working with Claude Code
-- **Domain language**: User, ShortLink, Slug, Click, GuestLink, TelegramAccount, Stats
+- **Domain language**: User, Link, Slug, Click, TelegramAccount, RefreshToken, Stats
+- **Bot**: Slink (@SlinkBot)
+
+---
+## 🗂️ Ubiquitous Language
+
+| Term            | Go type         | DB table             | Description                                    |
+|-----------------|-----------------|----------------------|------------------------------------------------|
+| User            | User            | users                | Registered user with email/password            |
+| Link            | Link            | links                | Slug + original URL, owner optional (guest ok) |
+| Slug            | string          | links.slug           | Short identifier, e.g. "abc123"                |
+| Click           | Click           | clicks               | Single redirect event                          |
+| Stats           | Stats           | —                    | Aggregated analytics for a Link                |
+| TelegramAccount | TelegramAccount | telegram_accounts    | Binding between User and Telegram user_id      |
+| RefreshToken    | RefreshToken    | refresh_tokens       | Opaque token for JWT rotation                  |
+
+---
+
+## ⚙️ Architecture Decisions
+
+- **Table names**: `links`, `users`, `clicks`, `refresh_tokens`, `telegram_accounts`
+- **Guest links**: `Link` with `user_id = NULL`, expires in 7 days (BR-03)
+- **TelegramAccount**: separate table with `user_id FK`, `telegram_id`, `username`, `linked_at`
+- **Click tracking**: async via buffered channel (size 1000) + background worker,
+  flush every 5s or 100 items. Never block redirect. Drop + log on channel full.
+- **Refresh tokens**: opaque token, SHA-256 hash stored in DB.
+  Rotation on use. Replay detection via unique constraint on `token_hash`.
+- **JWT**: RS256, access token TTL 15m, refresh token TTL 7d.
+  Keys generated via `make gen-keys`, stored in `keys/` (gitignored).
+- **Migrations**: `golang-migrate` format — separate `.up.sql` / `.down.sql` files.
+  Never edit applied migrations. Dirty state → stop and report.
+- **Logging**: `go.uber.org/zap` in all binaries. No `slog`, no `log.Printf`.
 
 ---
  
@@ -84,7 +115,7 @@ Follow standard Go project layout:
 ├── cmd/
 │   ├── slinkapi/       # HTTP server
 │   │   └── main.go
-│   └── bot/            # Slink bot in one binary
+│   └── slinkbot/       # Slink bot in one binary
 │       └── main.go
 ├── internal/           # private application code
 │   ├── domain/         # core business logic, no external deps
@@ -356,7 +387,11 @@ make test-unit     # run unit tests only (no Docker required)
 make test-int      # ensure env is up, then run integration tests
 make test-all      # unit + integration + race detector
 make lint          # run golangci-lint
-make build         # compile binary
+make dev-api       # docker-compose up -d && go run ./cmd/slinkapi
+make dev-bot       # go run ./cmd/slinkbot
+make gen-keys      # generate RSA keypair → keys/private.pem, keys/public.pem
+make build         # CGO_ENABLED=0 go build -o bin/slinkapi ./cmd/slinkapi
+                   #               go build -o bin/slinkbot ./cmd/slinkbot
 make run           # build and run the application locally
 ```
  
@@ -521,14 +556,17 @@ make migrate-status
  
 ### Approved Core Dependencies
 ```
-github.com/jackc/pgx/v5              — PostgreSQL driver (v5.5+)
-github.com/redis/go-redis/v9         — Redis client (v9.x)
-github.com/go-chi/chi/v5             — HTTP router, stdlib-compatible (v5.x)
-github.com/golang-migrate/migrate/v4 — DB migrations (v4.x)
-github.com/google/uuid               — UUID generation
-go.uber.org/zap                      — structured logging (v1.26+)
-github.com/stretchr/testify          — test assertions (v1.9+)
-github.com/testcontainers/testcontainers-go — integration test containers (v0.30+)
+github.com/jackc/pgx/v5                             — PostgreSQL driver (v5.5+)
+github.com/redis/go-redis/v9                        — Redis client (v9.x)
+github.com/go-chi/chi/v5                            — HTTP router, stdlib-compatible (v5.x)
+github.com/golang-migrate/migrate/v4                — DB migrations (v4.x)
+github.com/google/uuid                              — UUID generation
+go.uber.org/zap                                     — structured logging (v1.26+)
+github.com/stretchr/testify                         — test assertions (v1.9+)
+github.com/testcontainers/testcontainers-go         — integration test containers (v0.30+)
+github.com/golang-jwt/jwt/v5                        — JWT RS256 auth
+github.com/go-telegram-bot-api/telegram-bot-api/v5  — Telegram bot
+github.com/caarlos0/env/v11                         — env config loading
 ```
  
 > Introducing a dependency not on this list requires discussion and justification.
