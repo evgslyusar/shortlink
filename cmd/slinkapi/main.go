@@ -19,6 +19,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/evgslyusar/shortlink/internal/config"
+	"github.com/evgslyusar/shortlink/internal/repository"
+	"github.com/evgslyusar/shortlink/internal/service"
+	"github.com/evgslyusar/shortlink/internal/transport"
 	mw "github.com/evgslyusar/shortlink/internal/transport/middleware"
 )
 
@@ -64,13 +67,23 @@ func main() {
 	}
 	logger.Info("connected to redis")
 
+	// Set up dependencies.
+	userRepo := repository.NewUserPostgres(dbPool)
+	authSvc := service.NewAuthService(userRepo, userRepo, logger)
+	authHandler := transport.NewAuthHandler(authSvc, authSvc, logger)
+
 	// Set up router.
 	r := chi.NewRouter()
+	r.Use(mw.Recovery(logger))
 	r.Use(mw.Correlation)
 	r.Use(mw.Logger(logger))
-	r.Use(mw.Recovery(logger))
 
 	r.Get("/healthz", handleHealthz())
+
+	r.Route("/v1/auth", func(r chi.Router) {
+		r.Post("/register", authHandler.Register)
+		r.Post("/login", authHandler.Login)
+	})
 
 	srv := &http.Server{
 		Addr:         cfg.Addr(),
