@@ -163,9 +163,10 @@ func TestClickService_GetStats(t *testing.T) {
 	t.Run("returns stats for owned link", func(t *testing.T) {
 		finder := newFakeLinkBySlugFinder()
 		finder.addLink(&domain.Link{ID: "link-1", Slug: "abc", UserID: ptr("user-1")})
+		testDate := time.Date(2026, 3, 30, 0, 0, 0, 0, time.UTC)
 		querier := &fakeClickStatsQuerier{
 			total:     42,
-			byDay:     []domain.DayStat{{Date: "2026-03-30", Count: 10}},
+			byDay:     []domain.DayStat{{Date: testDate, Count: 10}},
 			byCountry: []domain.CountryStat{{Country: "US", Count: 30}},
 		}
 		svc := service.NewClickService(&fakeClickBatchInserter{}, querier, finder, zap.NewNop())
@@ -177,7 +178,7 @@ func TestClickService_GetStats(t *testing.T) {
 		if stats.TotalClicks != 42 {
 			t.Errorf("expected 42 total clicks, got %d", stats.TotalClicks)
 		}
-		if len(stats.ByDay) != 1 || stats.ByDay[0].Date != "2026-03-30" {
+		if len(stats.ByDay) != 1 || !stats.ByDay[0].Date.Equal(testDate) {
 			t.Errorf("unexpected by_day: %v", stats.ByDay)
 		}
 		if len(stats.ByCountry) != 1 || stats.ByCountry[0].Country != "US" {

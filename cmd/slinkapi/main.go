@@ -79,7 +79,7 @@ func main() {
 	clickRepo := repository.NewClickPostgres(dbPool)
 	clickSvc := service.NewClickService(clickRepo, clickRepo, linkRepo, logger)
 
-	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, clickSvc, cfg.BaseURL, logger)
+	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, transport.NewClickStatsAdapter(clickSvc), cfg.BaseURL, logger)
 	redirectHandler := transport.NewRedirectHandler(linkSvc, clickSvc, logger)
 
 	// Set up router.
@@ -115,11 +115,13 @@ func main() {
 		IdleTimeout:  cfg.IdleTimeout,
 	}
 
-	// Start click tracking worker.
+	// Start click tracking worker with its own cancellation so we can
+	// stop it after the HTTP server has drained all in-flight requests.
+	clickCtx, clickStop := context.WithCancel(context.Background())
 	clickDone := make(chan struct{})
 	go func() {
 		defer close(clickDone)
-		clickSvc.Run(ctx)
+		clickSvc.Run(clickCtx)
 	}()
 
 	// Start server in a goroutine.
@@ -140,6 +142,7 @@ func main() {
 		stop()
 	}
 
+	// 1. Shutdown HTTP server first — drains in-flight requests (which may record clicks).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -147,7 +150,8 @@ func main() {
 		logger.Fatal("slinkapi shutdown error", zap.Error(err))
 	}
 
-	// Wait for click worker to drain and flush remaining clicks.
+	// 2. Stop click worker — drains remaining channel items and flushes.
+	clickStop()
 	<-clickDone
 	logger.Info("slinkapi stopped")
 }

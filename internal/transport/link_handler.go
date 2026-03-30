@@ -10,7 +10,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/evgslyusar/shortlink/internal/domain"
-	"github.com/evgslyusar/shortlink/internal/service"
 )
 
 // LinkCreatorSvc creates a shortened link.
@@ -28,9 +27,16 @@ type LinkDeleterSvc interface {
 	DeleteLink(ctx context.Context, userID, slug string) error
 }
 
+// LinkStats holds aggregated click statistics returned by a stats service.
+type LinkStats struct {
+	TotalClicks int64
+	ByDay       []domain.DayStat
+	ByCountry   []domain.CountryStat
+}
+
 // LinkStatsSvc returns aggregated click statistics for a link.
 type LinkStatsSvc interface {
-	GetStats(ctx context.Context, userID, slug string) (*service.ClickStats, error)
+	GetStats(ctx context.Context, userID, slug string) (*LinkStats, error)
 }
 
 // LinkHandler handles HTTP requests for link endpoints.
@@ -84,6 +90,22 @@ type linkItem struct {
 
 type listLinksResponse struct {
 	Items []linkItem `json:"items"`
+}
+
+type statsResponse struct {
+	TotalClicks int64             `json:"total_clicks"`
+	ByDay       []dayStatResponse `json:"by_day"`
+	ByCountry   []countryStatResponse `json:"by_country"`
+}
+
+type dayStatResponse struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+type countryStatResponse struct {
+	Country string `json:"country"`
+	Count   int64  `json:"count"`
 }
 
 // CreateLink handles POST /v1/links.
@@ -186,7 +208,31 @@ func (h *LinkHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondData(w, r, http.StatusOK, stats)
+	respondData(w, r, http.StatusOK, toStatsResponse(stats))
+}
+
+func toStatsResponse(s *LinkStats) statsResponse {
+	days := make([]dayStatResponse, 0, len(s.ByDay))
+	for _, d := range s.ByDay {
+		days = append(days, dayStatResponse{
+			Date:  d.Date.Format("2006-01-02"),
+			Count: d.Count,
+		})
+	}
+
+	countries := make([]countryStatResponse, 0, len(s.ByCountry))
+	for _, c := range s.ByCountry {
+		countries = append(countries, countryStatResponse{
+			Country: c.Country,
+			Count:   c.Count,
+		})
+	}
+
+	return statsResponse{
+		TotalClicks: s.TotalClicks,
+		ByDay:       days,
+		ByCountry:   countries,
+	}
 }
 
 func (h *LinkHandler) logError(err error, status int) {

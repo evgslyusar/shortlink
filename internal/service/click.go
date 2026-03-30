@@ -31,9 +31,9 @@ type ClickStatsQuerier interface {
 
 // ClickStats holds aggregated statistics for a link.
 type ClickStats struct {
-	TotalClicks int64              `json:"total_clicks"`
-	ByDay       []domain.DayStat   `json:"by_day"`
-	ByCountry   []domain.CountryStat `json:"by_country"`
+	TotalClicks int64
+	ByDay       []domain.DayStat
+	ByCountry   []domain.CountryStat
 }
 
 // ClickService handles async click recording and stats retrieval.
@@ -103,10 +103,11 @@ func (s *ClickService) Run(ctx context.Context) {
 				case click := <-s.ch:
 					buf = append(buf, click)
 				default:
-					if len(buf) > 0 {
+					drained := len(buf)
+					if drained > 0 {
 						s.flush(buf)
 					}
-					s.logger.Info("click worker stopped", zap.Int("drained", len(buf)))
+					s.logger.Info("click worker stopped", zap.Int("drained", drained))
 					return
 				}
 			}

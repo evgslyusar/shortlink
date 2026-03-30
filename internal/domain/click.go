@@ -14,7 +14,7 @@ type Click struct {
 
 // DayStat holds an aggregated click count for a single date.
 type DayStat struct {
-	Date  string
+	Date  time.Time
 	Count int64
 }
 
