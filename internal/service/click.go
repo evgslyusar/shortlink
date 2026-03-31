@@ -156,6 +156,15 @@ func (s *ClickService) GetStats(ctx context.Context, userID, slug string) (*Clic
 	}, nil
 }
 
+// CountByLink returns the total number of clicks for a link.
+func (s *ClickService) CountByLink(ctx context.Context, linkID string) (int64, error) {
+	count, err := s.querier.CountByLink(ctx, linkID)
+	if err != nil {
+		return 0, fmt.Errorf("click.CountByLink: %w", err)
+	}
+	return count, nil
+}
+
 func (s *ClickService) flush(clicks []domain.Click) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
