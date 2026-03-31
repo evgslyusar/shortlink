@@ -412,6 +412,38 @@ type RateLimiter interface {
 
 ---
 
+### T-09: Web UI
+**Deps:** T-06, T-08
+
+React SPA в папке `web/`. Страницы: Home (shorten), Login/Register,
+Dashboard (list + stats), 404. API client через React Query.
+Auth state в Zustand. CORS и cookie-based auth — конфиги на бэкенде.
+
+**Files created:**
+- web/src/app/App.tsx, router.tsx, providers.tsx
+- web/src/features/auth/  (компоненты, хуки, api.ts)
+- web/src/features/links/ (компоненты, хуки, api.ts)
+- web/src/shared/components/ (Button, Input, Modal)
+- web/src/api/client.ts
+- web/.env.example
+- web/package.json, vite.config.ts, tsconfig.json
+
+**Files modified:**
+- cmd/slinkapi/main.go — добавить CORS middleware
+- internal/config/config.go — CORS allowed origins
+
+**Acceptance criteria:**
+- [ ] Home: можно сократить URL без логина (guest)
+- [ ] Register/Login: форма → JWT cookie → редирект на dashboard
+- [ ] Dashboard: список ссылок пользователя с кликами
+- [ ] Delete: удаление ссылки из UI
+- [ ] Stats: клики по дням для каждой ссылки
+- [ ] 401 → редирект на /login
+- [ ] npx tsc --noEmit без ошибок
+- [ ] eslint + prettier проходят
+
+---
+
 ## 3. Dependency Graph
 
 ```
