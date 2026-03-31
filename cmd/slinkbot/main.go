@@ -19,9 +19,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
 	"github.com/evgslyusar/shortlink/internal/config"
+	"github.com/evgslyusar/shortlink/internal/repository"
+	"github.com/evgslyusar/shortlink/internal/service"
 	"github.com/evgslyusar/shortlink/internal/telegram"
 )
 
@@ -41,7 +45,54 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bot := telegram.NewHandler(logger, cfg.TelegramBotToken)
+	// Connect to PostgreSQL.
+	dbPool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Fatal("failed to connect to postgres", zap.Error(err))
+	}
+	defer dbPool.Close()
+
+	if err := dbPool.Ping(ctx); err != nil {
+		logger.Fatal("failed to ping postgres", zap.Error(err))
+	}
+	logger.Info("connected to postgres")
+
+	// Connect to Redis.
+	redisOpts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		logger.Fatal("failed to parse redis url", zap.Error(err))
+	}
+
+	rdb := redis.NewClient(redisOpts)
+	defer rdb.Close()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		logger.Fatal("failed to ping redis", zap.Error(err))
+	}
+	logger.Info("connected to redis")
+
+	// Set up dependencies.
+	userRepo := repository.NewUserPostgres(dbPool)
+	authSvc := service.NewAuthService(userRepo, userRepo, logger)
+
+	linkRepo := repository.NewLinkPostgres(dbPool)
+	linkCache := repository.NewLinkCache(rdb)
+	linkSvc := service.NewLinkService(linkRepo, linkRepo, linkRepo, linkRepo, linkCache, logger)
+
+	clickRepo := repository.NewClickPostgres(dbPool)
+	clickSvc := service.NewClickService(clickRepo, clickRepo, linkRepo, logger)
+
+	telegramRepo := repository.NewTelegramAccountPostgres(dbPool)
+
+	tgSvc := telegram.NewService(
+		telegramRepo, telegramRepo,
+		authSvc,
+		linkSvc, linkSvc, linkSvc,
+		clickSvc,
+		cfg.BaseURL, logger,
+	)
+
+	bot := telegram.NewHandler(tgSvc, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /telegram/webhook", bot.HandleWebhook)
