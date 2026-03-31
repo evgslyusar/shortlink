@@ -27,6 +27,8 @@ type Config struct {
 	JWTAccessTTL      time.Duration `env:"JWT_ACCESS_TTL"  envDefault:"15m"`
 	JWTRefreshTTL     time.Duration `env:"JWT_REFRESH_TTL" envDefault:"168h"`
 
+	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:"," envDefault:"http://localhost:5173"`
+
 	TelegramBotToken   string `env:"TELEGRAM_BOT_TOKEN,required"`
 	TelegramWebhookURL string `env:"TELEGRAM_WEBHOOK_URL,required"`
 	BotHost            string `env:"BOT_HOST" envDefault:"0.0.0.0"`

@@ -143,6 +143,11 @@ func (s *TokenService) AccessTTLSeconds() int {
 	return int(s.accessTTL.Seconds())
 }
 
+// RefreshTTLSeconds returns the refresh token TTL in seconds (for cookie max-age).
+func (s *TokenService) RefreshTTLSeconds() int {
+	return int(s.refreshTTL.Seconds())
+}
+
 func (s *TokenService) signAccessToken(userID string) (string, error) {
 	now := time.Now()
 	claims := jwt.RegisteredClaims{

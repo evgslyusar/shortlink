@@ -125,11 +125,13 @@ func main() {
 	r.Use(mw.Recovery(logger))
 	r.Use(mw.Logger(logger))
 	r.Use(mw.Security)
+	r.Use(mw.CORS(cfg.CORSAllowedOrigins))
 	r.Use(mw.BodySizeLimit(1 << 20)) // 1 MB
 
 	r.Get("/healthz", handleHealthz())
 
 	r.Route("/v1/auth", func(r chi.Router) {
+		r.Use(mw.APISecurityHeaders)
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
 		r.Post("/refresh", authHandler.Refresh)
@@ -140,6 +142,7 @@ func main() {
 	rateLimitLinks := mw.RateLimit(rateLimiter, rlCfg, logger)
 
 	r.Route("/v1/links", func(r chi.Router) {
+		r.Use(mw.APISecurityHeaders)
 		r.With(optionalAuth, rateLimitLinks).Post("/", linkHandler.CreateLink)
 		r.With(requireAuth).Get("/", linkHandler.ListLinks)
 		r.With(requireAuth).Delete("/{slug}", linkHandler.DeleteLink)

@@ -23,12 +23,14 @@ type Authenticator interface {
 type TokenIssuer interface {
 	IssueTokens(ctx context.Context, userID string) (accessToken, refreshToken string, err error)
 	AccessTTLSeconds() int
+	RefreshTTLSeconds() int
 }
 
 // TokenRefresher rotates a refresh token into a new token pair.
 type TokenRefresher interface {
 	RefreshTokens(ctx context.Context, rawRefreshToken string) (accessToken, refreshToken string, err error)
 	AccessTTLSeconds() int
+	RefreshTTLSeconds() int
 }
 
 // TokenRevoker revokes a refresh token (logout).
@@ -134,6 +136,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	setAuthCookies(w, accessToken, refreshToken, h.issuer.AccessTTLSeconds(), h.issuer.RefreshTTLSeconds())
+
 	respondData(w, r, http.StatusOK, tokenResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -149,18 +153,28 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.RefreshToken == "" {
+	// Fallback: read refresh token from cookie if not in JSON body.
+	rawRefresh := req.RefreshToken
+	if rawRefresh == "" {
+		if c, cookieErr := r.Cookie("refresh_token"); cookieErr == nil {
+			rawRefresh = c.Value
+		}
+	}
+
+	if rawRefresh == "" {
 		respondError(w, r, http.StatusBadRequest, ErrCodeValidation, "refresh_token is required")
 		return
 	}
 
-	accessToken, refreshToken, err := h.refresher.RefreshTokens(r.Context(), req.RefreshToken)
+	accessToken, refreshToken, err := h.refresher.RefreshTokens(r.Context(), rawRefresh)
 	if err != nil {
 		status, code, msg := mapError(err)
 		h.logError(err, status)
 		respondError(w, r, status, code, msg)
 		return
 	}
+
+	setAuthCookies(w, accessToken, refreshToken, h.refresher.AccessTTLSeconds(), h.refresher.RefreshTTLSeconds())
 
 	respondData(w, r, http.StatusOK, tokenResponse{
 		AccessToken:  accessToken,
@@ -177,18 +191,69 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.RefreshToken == "" {
+	// Fallback: read refresh token from cookie if not in JSON body.
+	rawRefresh := req.RefreshToken
+	if rawRefresh == "" {
+		if c, cookieErr := r.Cookie("refresh_token"); cookieErr == nil {
+			rawRefresh = c.Value
+		}
+	}
+
+	if rawRefresh == "" {
 		respondError(w, r, http.StatusBadRequest, ErrCodeValidation, "refresh_token is required")
 		return
 	}
 
-	if err := h.revoker.RevokeRefreshToken(r.Context(), req.RefreshToken); err != nil {
+	if err := h.revoker.RevokeRefreshToken(r.Context(), rawRefresh); err != nil {
 		h.logError(err, http.StatusInternalServerError)
 		respondError(w, r, http.StatusInternalServerError, ErrCodeInternal, "internal error")
 		return
 	}
 
+	clearAuthCookies(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string, accessTTL, refreshTTL int) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    accessToken,
+		Path:     "/",
+		MaxAge:   accessTTL,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    refreshToken,
+		Path:     "/v1/auth",
+		MaxAge:   refreshTTL,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func clearAuthCookies(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "access_token",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/v1/auth",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func (h *AuthHandler) logError(err error, status int) {

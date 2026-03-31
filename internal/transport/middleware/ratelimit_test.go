@@ -171,8 +171,21 @@ func TestSecurity_Headers(t *testing.T) {
 
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
-	assert.Equal(t, "default-src 'none'", rec.Header().Get("Content-Security-Policy"))
 	assert.Equal(t, "strict-origin-when-cross-origin", rec.Header().Get("Referrer-Policy"))
+	// CSP is not set by Security — use APISecurityHeaders for API routes.
+	assert.Empty(t, rec.Header().Get("Content-Security-Policy"))
+}
+
+func TestAPISecurityHeaders(t *testing.T) {
+	handler := mw.APISecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, "default-src 'none'", rec.Header().Get("Content-Security-Policy"))
 }
 
 func TestBodySizeLimit_TooLarge(t *testing.T) {
