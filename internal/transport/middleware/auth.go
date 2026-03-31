@@ -50,6 +50,12 @@ func UserIDFromContext(ctx context.Context) string {
 	return id
 }
 
+// ContextWithUserID returns a new context with the given user ID.
+// Intended for testing and internal middleware composition.
+func ContextWithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDKey{}, userID)
+}
+
 func respondUnauthorized(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
