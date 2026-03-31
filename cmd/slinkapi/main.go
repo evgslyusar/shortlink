@@ -115,11 +115,17 @@ func main() {
 	requireAuth := mw.RequireAuth(tokenSvc)
 	optionalAuth := mw.OptionalAuth(tokenSvc)
 
+	// Rate limiter.
+	rateLimiter := mw.NewRedisRateLimiter(rdb)
+	rlCfg := mw.DefaultRateLimitConfig()
+
 	// Set up router.
 	r := chi.NewRouter()
 	r.Use(mw.Correlation)
 	r.Use(mw.Recovery(logger))
 	r.Use(mw.Logger(logger))
+	r.Use(mw.Security)
+	r.Use(mw.BodySizeLimit(1 << 20)) // 1 MB
 
 	r.Get("/healthz", handleHealthz())
 
@@ -131,8 +137,10 @@ func main() {
 		r.With(requireAuth).Post("/logout", authHandler.Logout)
 	})
 
+	rateLimitLinks := mw.RateLimit(rateLimiter, rlCfg, logger)
+
 	r.Route("/v1/links", func(r chi.Router) {
-		r.With(optionalAuth).Post("/", linkHandler.CreateLink)
+		r.With(optionalAuth, rateLimitLinks).Post("/", linkHandler.CreateLink)
 		r.With(requireAuth).Get("/", linkHandler.ListLinks)
 		r.With(requireAuth).Delete("/{slug}", linkHandler.DeleteLink)
 		r.With(requireAuth).Get("/{slug}/stats", linkHandler.Stats)
