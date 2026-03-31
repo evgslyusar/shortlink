@@ -2,7 +2,8 @@
        build dev-api dev-bot \
        migrate-up migrate-down migrate-status migrate-new \
        gen-keys \
-       test-unit test-int test-all lint tidy
+       test-unit test-int test-all lint tidy \
+       web-install web-dev web-build web-test web-lint dev
 
 # Load .env.local if it exists.
 -include .env.local
@@ -82,3 +83,23 @@ lint:
 
 tidy:
 	go mod tidy
+
+# --- Frontend ---
+
+web-install:
+	cd web && npm ci
+
+web-dev:
+	cd web && npm run dev
+
+web-build:
+	cd web && npm run build
+
+web-test:
+	cd web && npm test
+
+web-lint:
+	cd web && npm run lint && npx tsc --noEmit
+
+dev:
+	$(MAKE) dev-api & $(MAKE) web-dev

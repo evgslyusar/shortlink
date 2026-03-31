@@ -71,17 +71,29 @@ func respondUnauthorized(w http.ResponseWriter, r *http.Request) {
 }
 
 func extractAndValidate(r *http.Request, validator AccessTokenValidator) (string, bool) {
-	header := r.Header.Get("Authorization")
-	if header == "" {
+	token := extractToken(r)
+	if token == "" {
 		return "", false
 	}
-	parts := strings.SplitN(header, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", false
-	}
-	userID, err := validator.ValidateAccessToken(parts[1])
+	userID, err := validator.ValidateAccessToken(token)
 	if err != nil {
 		return "", false
 	}
 	return userID, true
+}
+
+// extractToken reads the access token from the Authorization header first,
+// falling back to the access_token cookie (for web UI with httpOnly cookies).
+func extractToken(r *http.Request) string {
+	header := r.Header.Get("Authorization")
+	if header != "" {
+		parts := strings.SplitN(header, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			return parts[1]
+		}
+	}
+	if c, err := r.Cookie("access_token"); err == nil && c.Value != "" {
+		return c.Value
+	}
+	return ""
 }

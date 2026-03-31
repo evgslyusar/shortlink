@@ -85,6 +85,37 @@ func TestRequireAuth(t *testing.T) {
 			t.Errorf("expected 401, got %d", rec.Code)
 		}
 	})
+
+	t.Run("valid cookie passes and sets user_id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(&http.Cookie{Name: "access_token", Value: "valid-token"})
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+		if rec.Body.String() != "user-1" {
+			t.Errorf("expected user-1, got %q", rec.Body.String())
+		}
+	})
+
+	t.Run("header takes priority over cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+		req.AddCookie(&http.Cookie{Name: "access_token", Value: "bad-token"})
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+		if rec.Body.String() != "user-1" {
+			t.Errorf("expected user-1, got %q", rec.Body.String())
+		}
+	})
 }
 
 // --- OptionalAuth tests ---
@@ -141,6 +172,21 @@ func TestOptionalAuth(t *testing.T) {
 		}
 		if rec.Body.String() != "guest" {
 			t.Errorf("expected guest, got %q", rec.Body.String())
+		}
+	})
+
+	t.Run("valid cookie sets user_id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(&http.Cookie{Name: "access_token", Value: "valid-token"})
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+		if rec.Body.String() != "user-1" {
+			t.Errorf("expected user-1, got %q", rec.Body.String())
 		}
 	})
 }

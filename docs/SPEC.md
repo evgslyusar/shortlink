@@ -31,6 +31,13 @@ authenticated users get click analytics and custom slugs.
 - US-12: I can use /account to link my Telegram to a registered account
 - US-13: I can use /list to see my 5 most recent links
 
+### Web UI user
+- US-14: I can open the homepage and shorten a URL without registering
+- US-15: I can register and log in via the web interface
+- US-16: I can see my dashboard with a list of links and stats
+- US-17: I can create a link with optional custom slug and expiry
+- US-18: I can delete a link from the dashboard
+
 ---
 
 ## 3. Domain Model
@@ -137,12 +144,16 @@ Errors:   409 slug taken | 422 invalid URL | 401 unauthenticated (guest ok)
 - NFR-07: Docker + docker-compose for local dev
 - NFR-08: Deploy target: Railway (or any VPS with Docker)
 - NFR-09: CI: GitHub Actions — lint (golangci-lint) + test on PR
+- NFR-10: React 19 + TypeScript 5, Vite build, CSS Modules
+- NFR-11: State: React Query (server) + Zustand (client auth state)
+- NFR-12: Routing: React Router v7 (SPA, client-side)
+- NFR-13: Auth: tokens in httpOnly cookies (no localStorage)
+- NFR-14: Web app served from /web route or separate subdomain
 
 ---
 
 ## 8. Out of Scope (v1)
 
-- Web UI (API only in v1)
 - Link preview / Open Graph
 - QR code generation
 - Team / organization accounts

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -27,6 +28,8 @@ type Config struct {
 	JWTAccessTTL      time.Duration `env:"JWT_ACCESS_TTL"  envDefault:"15m"`
 	JWTRefreshTTL     time.Duration `env:"JWT_REFRESH_TTL" envDefault:"168h"`
 
+	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:"," envDefault:"http://localhost:5173"`
+
 	TelegramBotToken   string `env:"TELEGRAM_BOT_TOKEN,required"`
 	TelegramWebhookURL string `env:"TELEGRAM_WEBHOOK_URL,required"`
 	BotHost            string `env:"BOT_HOST" envDefault:"0.0.0.0"`
@@ -36,6 +39,12 @@ type Config struct {
 // Addr returns the host:port string for the HTTP server listener.
 func (c Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.ServerHost, c.ServerPort)
+}
+
+// SecureCookies returns true when BaseURL uses HTTPS (production).
+// In local dev over HTTP, cookies must not have the Secure flag.
+func (c Config) SecureCookies() bool {
+	return strings.HasPrefix(c.BaseURL, "https://")
 }
 
 // Load reads configuration from environment variables and validates required fields.
