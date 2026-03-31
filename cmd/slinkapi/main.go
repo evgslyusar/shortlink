@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -70,7 +71,35 @@ func main() {
 	// Set up dependencies.
 	userRepo := repository.NewUserPostgres(dbPool)
 	authSvc := service.NewAuthService(userRepo, userRepo, logger)
-	authHandler := transport.NewAuthHandler(authSvc, authSvc, logger)
+
+	// Load RSA keys for JWT signing/validation.
+	privPEM, err := os.ReadFile(cfg.JWTPrivateKeyPath)
+	if err != nil {
+		logger.Fatal("failed to read JWT private key", zap.String("path", cfg.JWTPrivateKeyPath), zap.Error(err))
+	}
+	privKey, err := jwt.ParseRSAPrivateKeyFromPEM(privPEM)
+	if err != nil {
+		logger.Fatal("failed to parse JWT private key", zap.Error(err))
+	}
+
+	pubPEM, err := os.ReadFile(cfg.JWTPublicKeyPath)
+	if err != nil {
+		logger.Fatal("failed to read JWT public key", zap.String("path", cfg.JWTPublicKeyPath), zap.Error(err))
+	}
+	pubKey, err := jwt.ParseRSAPublicKeyFromPEM(pubPEM)
+	if err != nil {
+		logger.Fatal("failed to parse JWT public key", zap.Error(err))
+	}
+
+	refreshTokenRepo := repository.NewRefreshTokenPostgres(dbPool)
+	tokenSvc := service.NewTokenService(
+		refreshTokenRepo, refreshTokenRepo, refreshTokenRepo,
+		privKey, pubKey,
+		cfg.JWTAccessTTL, cfg.JWTRefreshTTL,
+		logger,
+	)
+
+	authHandler := transport.NewAuthHandler(authSvc, authSvc, tokenSvc, tokenSvc, tokenSvc, logger)
 
 	linkRepo := repository.NewLinkPostgres(dbPool)
 	linkCache := repository.NewLinkCache(rdb)
@@ -81,6 +110,10 @@ func main() {
 
 	linkHandler := transport.NewLinkHandler(linkSvc, linkSvc, linkSvc, transport.NewClickStatsAdapter(clickSvc), cfg.BaseURL, logger)
 	redirectHandler := transport.NewRedirectHandler(linkSvc, clickSvc, logger)
+
+	// Auth middleware.
+	requireAuth := mw.RequireAuth(tokenSvc)
+	optionalAuth := mw.OptionalAuth(tokenSvc)
 
 	// Set up router.
 	r := chi.NewRouter()
@@ -93,15 +126,16 @@ func main() {
 	r.Route("/v1/auth", func(r chi.Router) {
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
+		r.Post("/refresh", authHandler.Refresh)
+
+		r.With(requireAuth).Post("/logout", authHandler.Logout)
 	})
 
 	r.Route("/v1/links", func(r chi.Router) {
-		// TODO(T-06): add auth middleware — POST is optionally authenticated (guest ok),
-		// GET and DELETE require authentication.
-		r.Post("/", linkHandler.CreateLink)
-		r.Get("/", linkHandler.ListLinks)
-		r.Delete("/{slug}", linkHandler.DeleteLink)
-		r.Get("/{slug}/stats", linkHandler.Stats)
+		r.With(optionalAuth).Post("/", linkHandler.CreateLink)
+		r.With(requireAuth).Get("/", linkHandler.ListLinks)
+		r.With(requireAuth).Delete("/{slug}", linkHandler.DeleteLink)
+		r.With(requireAuth).Get("/{slug}/stats", linkHandler.Stats)
 	})
 
 	// Redirect catch-all — must be registered after /healthz and /v1/* to avoid conflicts.
