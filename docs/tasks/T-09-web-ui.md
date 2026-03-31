@@ -1,6 +1,6 @@
 # T-09: Web UI
 
-**Status:** Todo
+**Status:** Done
 **Branch:** `feature/t-09-web-ui`
 **Deps:** T-06, T-08
 
