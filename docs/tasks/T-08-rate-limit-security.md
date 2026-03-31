@@ -1,6 +1,6 @@
 # T-08: Rate Limiting & Security
 
-**Status:** Todo
+**Status:** Done
 **Branch:** `feature/t-08-rate-limit`
 **Deps:** T-06
 
@@ -85,8 +85,8 @@ Add middleware-level enforcement for 413 response on oversized bodies.
 
 ## Acceptance Criteria
 
-- [ ] 11th guest creation in 1hr: 429 with Retry-After
-- [ ] 101st auth creation in 1hr: 429 with Retry-After
-- [ ] Redirects are not rate-limited
-- [ ] All responses include security headers
-- [ ] Body > 1MB: 413
+- [x] 11th guest creation in 1hr: 429 with Retry-After
+- [x] 101st auth creation in 1hr: 429 with Retry-After
+- [x] Redirects are not rate-limited
+- [x] All responses include security headers
+- [x] Body > 1MB: 413
