@@ -2,8 +2,10 @@ import { type FormEvent, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
-import { useRegister } from "../hooks/useRegister";
 import { ApiClientError } from "@/api/client";
+
+import { useRegister } from "../hooks/useRegister";
+
 import styles from "./AuthForm.module.css";
 
 export function RegisterForm({ onSuccess }: { onSuccess: () => void }) {

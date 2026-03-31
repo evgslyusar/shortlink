@@ -1,17 +1,27 @@
 import { useState } from "react";
 
+import { Button } from "@/shared/components/Button";
+
 import { useLinks } from "../hooks/useLinks";
 import { useDeleteLink } from "../hooks/useDeleteLink";
+
 import { LinkRow } from "./LinkRow";
 import { LinkStats } from "./LinkStats";
-import { Button } from "@/shared/components/Button";
 import styles from "./LinkList.module.css";
 
 export function LinkList() {
   const [page, setPage] = useState(1);
   const [statsSlug, setStatsSlug] = useState<string | null>(null);
+  const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
   const { data, isLoading, error } = useLinks(page);
   const deleteMutation = useDeleteLink();
+
+  const handleDelete = (slug: string) => {
+    setDeletingSlug(slug);
+    deleteMutation.mutate(slug, {
+      onSettled: () => setDeletingSlug(null),
+    });
+  };
 
   if (isLoading) return <p>Loading links...</p>;
   if (error) return <p>Failed to load links.</p>;
@@ -41,9 +51,9 @@ export function LinkList() {
                 <LinkRow
                   key={link.slug}
                   link={link}
-                  onDelete={(slug) => deleteMutation.mutate(slug)}
+                  onDelete={handleDelete}
                   onViewStats={(slug) => setStatsSlug(slug === statsSlug ? null : slug)}
-                  isDeleting={deleteMutation.isPending}
+                  deletingSlug={deletingSlug}
                 />
               ))}
             </tbody>

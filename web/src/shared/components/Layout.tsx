@@ -1,7 +1,7 @@
 import { Link, Outlet } from "react-router-dom";
 
-import { useAuth } from "@/features/auth/hooks/useAuth";
-import { useLogout } from "@/features/auth/hooks/useLogout";
+import { useAuth, useLogout } from "@/features/auth";
+
 import { Button } from "./Button";
 import styles from "./Layout.module.css";
 

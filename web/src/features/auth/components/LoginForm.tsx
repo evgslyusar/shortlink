@@ -2,9 +2,11 @@ import { type FormEvent, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
+import { ApiClientError } from "@/api/client";
+
 import { useLogin } from "../hooks/useLogin";
 import { useAuth } from "../hooks/useAuth";
-import { ApiClientError } from "@/api/client";
+
 import styles from "./AuthForm.module.css";
 
 export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
@@ -19,8 +21,7 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
       { email, password },
       {
         onSuccess: (res) => {
-          setAuth({ id: "", email });
-          void res;
+          setAuth({ id: res.data.user.user_id, email: res.data.user.email });
           onSuccess();
         },
       },

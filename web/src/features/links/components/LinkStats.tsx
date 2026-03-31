@@ -1,5 +1,7 @@
-import { useLinkStats } from "../hooks/useLinkStats";
 import { Button } from "@/shared/components/Button";
+
+import { useLinkStats } from "../hooks/useLinkStats";
+
 import styles from "./LinkStats.module.css";
 
 interface LinkStatsProps {

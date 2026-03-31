@@ -40,30 +40,34 @@ type TokenRevoker interface {
 
 // AuthHandler handles HTTP requests for authentication endpoints.
 type AuthHandler struct {
-	reg       Registerer
-	auth      Authenticator
-	issuer    TokenIssuer
-	refresher TokenRefresher
-	revoker   TokenRevoker
-	logger    *zap.Logger
+	reg          Registerer
+	auth         Authenticator
+	issuer       TokenIssuer
+	refresher    TokenRefresher
+	revoker      TokenRevoker
+	secureCookie bool
+	logger       *zap.Logger
 }
 
 // NewAuthHandler creates a new AuthHandler.
+// secureCookie controls the Secure flag on auth cookies (true for HTTPS, false for local HTTP dev).
 func NewAuthHandler(
 	reg Registerer,
 	auth Authenticator,
 	issuer TokenIssuer,
 	refresher TokenRefresher,
 	revoker TokenRevoker,
+	secureCookie bool,
 	logger *zap.Logger,
 ) *AuthHandler {
 	return &AuthHandler{
-		reg:       reg,
-		auth:      auth,
-		issuer:    issuer,
-		refresher: refresher,
-		revoker:   revoker,
-		logger:    logger,
+		reg:          reg,
+		auth:         auth,
+		issuer:       issuer,
+		refresher:    refresher,
+		revoker:      revoker,
+		secureCookie: secureCookie,
+		logger:       logger,
 	}
 }
 
@@ -81,6 +85,13 @@ type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int    `json:"expires_in"`
+}
+
+type loginResponse struct {
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+	ExpiresIn    int          `json:"expires_in"`
+	User         userResponse `json:"user"`
 }
 
 type refreshRequest struct {
@@ -136,22 +147,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setAuthCookies(w, accessToken, refreshToken, h.issuer.AccessTTLSeconds(), h.issuer.RefreshTTLSeconds())
+	setAuthCookies(w, accessToken, refreshToken, h.issuer.AccessTTLSeconds(), h.issuer.RefreshTTLSeconds(), h.secureCookie)
 
-	respondData(w, r, http.StatusOK, tokenResponse{
+	respondData(w, r, http.StatusOK, loginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    h.issuer.AccessTTLSeconds(),
+		User: userResponse{
+			UserID: user.ID,
+			Email:  user.Email,
+		},
 	})
 }
 
 // Refresh handles POST /v1/auth/refresh.
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeJSON[refreshRequest](w, r)
-	if err != nil {
-		respondError(w, r, http.StatusBadRequest, ErrCodeValidation, "invalid request body")
-		return
-	}
+	// Decode body; ignore errors so cookie-only clients can send an empty body.
+	req, _ := decodeJSON[refreshRequest](w, r)
 
 	// Fallback: read refresh token from cookie if not in JSON body.
 	rawRefresh := req.RefreshToken
@@ -174,7 +186,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setAuthCookies(w, accessToken, refreshToken, h.refresher.AccessTTLSeconds(), h.refresher.RefreshTTLSeconds())
+	setAuthCookies(w, accessToken, refreshToken, h.refresher.AccessTTLSeconds(), h.refresher.RefreshTTLSeconds(), h.secureCookie)
 
 	respondData(w, r, http.StatusOK, tokenResponse{
 		AccessToken:  accessToken,
@@ -185,11 +197,8 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 // Logout handles POST /v1/auth/logout.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	req, err := decodeJSON[logoutRequest](w, r)
-	if err != nil {
-		respondError(w, r, http.StatusBadRequest, ErrCodeValidation, "invalid request body")
-		return
-	}
+	// Decode body; ignore errors so cookie-only clients can send an empty body.
+	req, _ := decodeJSON[logoutRequest](w, r)
 
 	// Fallback: read refresh token from cookie if not in JSON body.
 	rawRefresh := req.RefreshToken
@@ -210,18 +219,18 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clearAuthCookies(w)
+	clearAuthCookies(w, h.secureCookie)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string, accessTTL, refreshTTL int) {
+func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string, accessTTL, refreshTTL int, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "access_token",
 		Value:    accessToken,
 		Path:     "/",
 		MaxAge:   accessTTL,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{
@@ -230,19 +239,19 @@ func setAuthCookies(w http.ResponseWriter, accessToken, refreshToken string, acc
 		Path:     "/v1/auth",
 		MaxAge:   refreshTTL,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
-func clearAuthCookies(w http.ResponseWriter) {
+func clearAuthCookies(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "access_token",
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.SetCookie(w, &http.Cookie{
@@ -251,7 +260,7 @@ func clearAuthCookies(w http.ResponseWriter) {
 		Path:     "/v1/auth",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }

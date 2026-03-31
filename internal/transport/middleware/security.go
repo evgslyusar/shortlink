@@ -3,7 +3,7 @@ package middleware
 import "net/http"
 
 // Security adds common security headers to all responses.
-// CSP is not set here — use APISecurityHeaders or WebSecurityHeaders for route-specific policies.
+// CSP is not set here — use APISecurityHeaders for route-specific policies.
 func Security(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

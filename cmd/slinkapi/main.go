@@ -99,7 +99,7 @@ func main() {
 		logger,
 	)
 
-	authHandler := transport.NewAuthHandler(authSvc, authSvc, tokenSvc, tokenSvc, tokenSvc, logger)
+	authHandler := transport.NewAuthHandler(authSvc, authSvc, tokenSvc, tokenSvc, tokenSvc, cfg.SecureCookies(), logger)
 
 	linkRepo := repository.NewLinkPostgres(dbPool)
 	linkCache := repository.NewLinkCache(rdb)

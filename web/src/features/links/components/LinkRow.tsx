@@ -1,15 +1,17 @@
 import { Button } from "@/shared/components/Button";
+
 import type { Link } from "../types";
+
 import styles from "./LinkList.module.css";
 
 interface LinkRowProps {
   link: Link;
   onDelete: (slug: string) => void;
   onViewStats: (slug: string) => void;
-  isDeleting: boolean;
+  deletingSlug: string | null;
 }
 
-export function LinkRow({ link, onDelete, onViewStats, isDeleting }: LinkRowProps) {
+export function LinkRow({ link, onDelete, onViewStats, deletingSlug }: LinkRowProps) {
   return (
     <tr className={styles.row}>
       <td>
@@ -26,7 +28,11 @@ export function LinkRow({ link, onDelete, onViewStats, isDeleting }: LinkRowProp
           <Button variant="ghost" onClick={() => onViewStats(link.slug)}>
             Stats
           </Button>
-          <Button variant="danger" onClick={() => onDelete(link.slug)} disabled={isDeleting}>
+          <Button
+            variant="danger"
+            onClick={() => onDelete(link.slug)}
+            disabled={deletingSlug === link.slug}
+          >
             Delete
           </Button>
         </div>

@@ -1,7 +1,8 @@
 import { Link, Navigate, useNavigate } from "react-router-dom";
 
-import { LoginForm } from "@/features/auth";
-import { useAuth } from "@/features/auth/hooks/useAuth";
+import { LoginForm, useAuth } from "@/features/auth";
+
+import styles from "./AuthPage.module.css";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -14,7 +15,7 @@ export default function LoginPage() {
   return (
     <div>
       <LoginForm onSuccess={() => navigate("/dashboard")} />
-      <p style={{ textAlign: "center", fontSize: "0.875rem" }}>
+      <p className={styles.footer}>
         Don&apos;t have an account? <Link to="/register">Create one</Link>
       </p>
     </div>

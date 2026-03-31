@@ -2,9 +2,11 @@ import { type FormEvent, useState } from "react";
 
 import { Button } from "@/shared/components/Button";
 import { Input } from "@/shared/components/Input";
-import { useCreateLink } from "../hooks/useCreateLink";
 import { ApiClientError } from "@/api/client";
-import type { CreateLinkResponse } from "../types";
+
+import { useCreateLink } from "../hooks/useCreateLink";
+import type { CreateLinkRequest, CreateLinkResponse } from "../types";
+
 import styles from "./ShortenForm.module.css";
 
 interface ShortenFormProps {
@@ -14,6 +16,7 @@ interface ShortenFormProps {
 export function ShortenForm({ onCreated }: ShortenFormProps) {
   const [url, setUrl] = useState("");
   const [slug, setSlug] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
   const [result, setResult] = useState<CreateLinkResponse | null>(null);
   const createMutation = useCreateLink();
 
@@ -21,9 +24,12 @@ export function ShortenForm({ onCreated }: ShortenFormProps) {
     e.preventDefault();
     setResult(null);
 
-    const payload: { url: string; slug?: string } = { url };
+    const payload: CreateLinkRequest = { url };
     if (slug.trim()) {
       payload.slug = slug.trim();
+    }
+    if (expiresAt) {
+      payload.expires_at = new Date(expiresAt).toISOString();
     }
 
     createMutation.mutate(payload, {
@@ -31,6 +37,7 @@ export function ShortenForm({ onCreated }: ShortenFormProps) {
         setResult(res.data);
         setUrl("");
         setSlug("");
+        setExpiresAt("");
         onCreated?.(res.data);
       },
     });
@@ -56,6 +63,12 @@ export function ShortenForm({ onCreated }: ShortenFormProps) {
           value={slug}
           onChange={(e) => setSlug(e.target.value)}
           placeholder="my-custom-slug"
+        />
+        <Input
+          label="Expiry date (optional)"
+          type="datetime-local"
+          value={expiresAt}
+          onChange={(e) => setExpiresAt(e.target.value)}
         />
         {errorMessage && (
           <p className={styles.error} role="alert">

@@ -9,6 +9,7 @@ export interface Link {
 export interface CreateLinkRequest {
   url: string;
   slug?: string;
+  expires_at?: string;
 }
 
 export interface CreateLinkResponse {

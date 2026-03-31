@@ -1,0 +1,19 @@
+.container {
+  text-align: center;
+  padding: 4rem 0;
+}
+
+.title {
+  font-size: 3rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.message {
+  color: #6b7280;
+  margin-bottom: 1.5rem;
+}
+
+.link {
+  color: #2563eb;
+}

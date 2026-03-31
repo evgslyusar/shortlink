@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -38,6 +39,12 @@ type Config struct {
 // Addr returns the host:port string for the HTTP server listener.
 func (c Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.ServerHost, c.ServerPort)
+}
+
+// SecureCookies returns true when BaseURL uses HTTPS (production).
+// In local dev over HTTP, cookies must not have the Secure flag.
+func (c Config) SecureCookies() bool {
+	return strings.HasPrefix(c.BaseURL, "https://")
 }
 
 // Load reads configuration from environment variables and validates required fields.

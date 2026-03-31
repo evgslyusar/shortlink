@@ -1,8 +1,15 @@
 import { apiClient } from "@/api/client";
-import type { AuthResponse, LoginRequest, RegisterRequest, UserResponse } from "./types";
+
+import type {
+  LoginRequest,
+  LoginResponse,
+  RefreshResponse,
+  RegisterRequest,
+  UserResponse,
+} from "./types";
 
 export function login(data: LoginRequest) {
-  return apiClient.post<AuthResponse>("/auth/login", data);
+  return apiClient.post<LoginResponse>("/auth/login", data);
 }
 
 export function register(data: RegisterRequest) {
@@ -10,7 +17,7 @@ export function register(data: RegisterRequest) {
 }
 
 export function refresh() {
-  return apiClient.post<AuthResponse>("/auth/refresh", {});
+  return apiClient.post<RefreshResponse>("/auth/refresh", {});
 }
 
 export function logout() {

@@ -8,13 +8,20 @@ export interface RegisterRequest {
   password: string;
 }
 
-export interface AuthResponse {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-}
-
 export interface UserResponse {
   user_id: string;
   email: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  user: UserResponse;
+}
+
+export interface RefreshResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
 }

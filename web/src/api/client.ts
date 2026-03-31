@@ -11,6 +11,14 @@ class ApiClientError extends Error {
   }
 }
 
+// onUnauthorized is called when the API returns 401. Set by the app shell
+// to trigger a React Router navigation instead of a hard window.location reload.
+let onUnauthorized: (() => void) | null = null;
+
+export function setOnUnauthorized(fn: () => void) {
+  onUnauthorized = fn;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -22,19 +30,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
   });
 
   if (res.status === 204) {
-    return { data: null as T, meta: { request_id: "" } };
+    // 204 No Content — return a sentinel value. Callers using delete/logout
+    // expect ApiResponse<null> so this is safe for those paths.
+    return { data: null as unknown as T, meta: { request_id: "" } };
   }
 
   const body: unknown = await res.json();
 
   if (!res.ok) {
-    const err = body as ApiError;
+    // Safely extract error — guard against unexpected response shapes.
+    const apiErr = body as ApiError;
+    const errorObj = apiErr?.error ?? { code: "UNKNOWN", message: "unexpected error" };
 
-    if (res.status === 401 && window.location.pathname !== "/login") {
-      window.location.href = "/login";
+    if (res.status === 401 && onUnauthorized) {
+      onUnauthorized();
     }
 
-    throw new ApiClientError(res.status, err.error);
+    throw new ApiClientError(res.status, errorObj);
   }
 
   return body as ApiResponse<T>;
