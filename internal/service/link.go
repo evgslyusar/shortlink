@@ -228,6 +228,16 @@ func (s *LinkService) ResolveSlug(ctx context.Context, slug string) (string, str
 	return link.OriginalURL, link.ID, nil
 }
 
+// FindBySlug retrieves a link by its slug.
+// Returns domain.ErrNotFound if the slug does not exist.
+func (s *LinkService) FindBySlug(ctx context.Context, slug string) (*domain.Link, error) {
+	link, err := s.finder.FindBySlug(ctx, slug)
+	if err != nil {
+		return nil, fmt.Errorf("link.FindBySlug: %w", err)
+	}
+	return link, nil
+}
+
 func validateURL(rawURL string) error {
 	u, err := url.ParseRequestURI(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {

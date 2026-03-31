@@ -1,6 +1,6 @@
 # T-07: Telegram Bot Wiring
 
-**Status:** Todo
+**Status:** Done
 **Branch:** `feature/t-07-telegram-bot`
 **Deps:** T-02, T-03, T-05
 
@@ -67,9 +67,9 @@ type TelegramAccountByTelegramIDFinder interface {
 
 ## Acceptance Criteria
 
-- [ ] URL message → returns short link
-- [ ] `/list` → 5 most recent links (requires linked account)
-- [ ] `/stats <slug>` → click count
-- [ ] `/account connect email password` → links Telegram to user
-- [ ] Unlinked user gets prompt to link account
-- [ ] Wrong credentials → error message
+- [x] URL message → returns short link
+- [x] `/list` → 5 most recent links (requires linked account)
+- [x] `/stats <slug>` → click count
+- [x] `/account connect email password` → links Telegram to user
+- [x] Unlinked user gets prompt to link account
+- [x] Wrong credentials → error message

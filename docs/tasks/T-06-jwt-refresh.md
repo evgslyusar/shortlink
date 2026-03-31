@@ -1,6 +1,6 @@
 # T-06: JWT Auth Middleware & Refresh Tokens
 
-**Status:** Todo
+**Status:** Done (PR #10)
 **Branch:** `feature/t-06-jwt-refresh`
 **Deps:** T-02
 
@@ -101,10 +101,10 @@ type RefreshTokenDeleter interface {
 
 ## Acceptance Criteria
 
-- [ ] Login returns `{access_token, refresh_token, expires_in}`
-- [ ] Protected routes: 401 without/expired token
-- [ ] Refresh: new token pair issued, old refresh token revoked
-- [ ] Reused refresh token: 401 (replay detection)
-- [ ] Logout: revokes refresh token, 204
-- [ ] `POST /v1/links` works with and without auth
-- [ ] `make gen-keys` required before API starts; clear error if keys missing
+- [x] Login returns `{access_token, refresh_token, expires_in}`
+- [x] Protected routes: 401 without/expired token
+- [x] Refresh: new token pair issued, old refresh token revoked
+- [x] Reused refresh token: 401 (replay detection)
+- [x] Logout: revokes refresh token, 204
+- [x] `POST /v1/links` works with and without auth
+- [x] `make gen-keys` required before API starts; clear error if keys missing
